@@ -1,0 +1,1943 @@
+---
+title: "Aplicacion de la IA en el diseño de cruzamiento dirigidos. Variable madre"
+author: "Gonzalo Rivera"
+date: "2023-07-08"
+output:
+  html_document:
+    toc: true 
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. INTRODUCCIÓN
+
+En este caso vamos a llevar a cabo los analisis para los modelos de clasificacion binaria, es decir, realizaremos los modelos siguiendo dos planteamiento, el primero seria ver si el modelo es capaz de diferenciar entre una madre y el resto
+
+# 2. PREPROCESADO DE DATOS
+
+Primero vamos a limpiar de NA.
+
+```{r, warning=FALSE}
+library(readxl)
+datosm <- read_excel("C:/Users/gonza/Documents/TFM/data/datosred.xlsx")
+```
+
+```{r}
+library(mice)
+library(forcats)
+datam <- datosm[, c("MADRE", "FLINT", "PRINT", "MADUR", "FRUTO", "CASCA", "CASC1", "DUREZ", "GRANO", "GRAN1", "RENDI", "FALLO", "FALLP", "DOBLE", "DOBLP", "FORMA", "ESPES", "RUGOS", "COLOR", "SABOR", "NOTA")]
+md.pattern(datam,rotate.names = T)
+```
+
+```{r}
+library(dplyr)
+datosmred <- datam[complete.cases(datam), ]
+table(datosmred$MADRE)
+```
+
+# 3. GENERACION DE MODELOS MULTIPLES PARA PADRE
+
+
+Seleccionamos los padres con mas de 15 observaciones
+
+```{r}
+# Calcular el recuento de observaciones por cruce
+recuentomadre <- table(datosmred$MADRE)
+
+# Obtener los cruces con más de 15 observaciones
+madressel <- names(recuentomadre)[recuentomadre > 15]
+
+# Crear un nuevo conjunto de datos con los cruces seleccionados
+datosmr <- datosmred[datosmred$MADRE %in% madressel, ]
+```
+
+```{r}
+datosmr$MADRE <- as.factor(datosmr$MADRE)
+table(datosmr$MADRE)
+str(datosmr)
+```
+
+Ahora visualizamos de forma grafica el numero de niveles por madre
+
+```{r}
+library(ggplot2)
+ggplot(datosmr, aes(x = MADRE)) +
+  geom_bar() +
+  labs(x = "Padre", y = "Número de observaciones", title = "Número de observaciones por madre") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 3.1 SELECCION DE VARIABLES POR RANDOM FOREST
+
+En este punto podemos llevar a cabo la seleccion de variables para luego comprobar los resultados.
+
+```{r}
+library(caret)
+set.seed(12345)
+datosmpart <- createDataPartition(datosmr$MADRE,p=0.8,list = FALSE)
+datosm.train <- datosmr[datosmpart,]
+datosm.test <- datosmr[-datosmpart,]
+```
+
+```{r eval=FALSE}
+subsets <- c(3:21) #Indicamos que cree subgrupos de entre 3 y 21 variables.
+
+seeds <- vector(mode = "list", length = 6)
+
+for(i in 1:10) seeds[[i]] <- sample.int(1000, length(subsets) + 1)
+seeds[[11]] <- sample.int(1000, 1)
+
+ctrl.treebag.rfe.cv.10 <- rfeControl(functions=rfFuncs , 
+                                     method = "cv", 
+                                     number = 10, 
+                                     seeds = seeds,
+                                     returnResamp="final", 
+                                     verbose = TRUE,
+                                     allowParallel = TRUE)
+```
+
+```{r eval=FALSE}
+treebag.rfe.cv.10madre <- rfe(MADRE~., data=datosm.train,
+                         sizes=subsets, 
+                         rfeControl=ctrl.treebag.rfe.cv.10)
+```
+
+Le quitamos el contenido de fit, para que no tenga tanto peso el archivo y guardammos el rds.
+
+```{r eval=FALSE}
+treebag.rfe.cv.10madre$fit = NULL
+saveRDS(treebag.rfe.cv.10madre, "C:/Users/gonza/Documents/TFM/treebag.fre.cv.10madre.rds")
+```
+
+```{r}
+varselecmadre <- readRDS("C:/Users/gonza/Documents/TFM/treebag.fre.cv.10madre.rds")
+varselecmadre$optVariables
+```
+
+Nuestro modelo nos dice que las variables que mayor importancia tienen son:  "MADUR" "GRAN1" "RENDI" "GRANO" "CASC1" "CASCA" "SABOR" "PRINT" "FORMA" "NOTA"  "COLOR" "ESPES" "RUGOS" "DUREZ" "FLINT" "DOBLP" "DOBLE"
+
+## 3.2 GENERACION DE MODELOS MULTIPLES CON DATOS SELECCION DE VARIABLES
+
+```{r}
+datosmsv <- datosmr[,c("MADRE", "MADUR" ,"GRAN1" ,"RENDI" ,"GRANO" ,"CASC1" ,"CASCA" ,"SABOR", "PRINT", "FORMA" ,"NOTA" , "COLOR" ,"ESPES" ,"RUGOS", "DUREZ", "FLINT" ,"DOBLP" ,"DOBLE")]
+```
+
+Primero balanceamos los datos 
+
+```{r}
+# Crear una tabla con el recuento de los niveles de la variable "madre"
+tablamadresv <- table(datosmsv$MADRE)
+
+# Encontrar el nivel con el menor número de observaciones
+minobsmsv <- min(tablamadresv)
+
+# Crear una lista vacía para almacenar los datos balanceados
+datosbmadresv <- data.frame()
+
+# Iterar sobre cada nivel de la variable "madre"
+for (nivel in levels(datosmsv$MADRE)) {
+  # Subconjunto de datos para el nivel actual
+  datosnivelmsv <- subset(datosmsv, MADRE == nivel)
+  
+  # Muestreo aleatorio de observaciones para igualar el número mínimo de observaciones
+  datosmuestrmsv <- datosnivelmsv[sample(1:nrow(datosnivelmsv), minobsmsv), ]
+  
+  # Agregar los datos muestreados al conjunto de datos balanceados
+  datosbmadresv <- rbind(datosbmadresv, datosmuestrmsv)
+}
+
+# Verificar el balance resultante
+table(datosbmadresv$MADRE)
+```
+
+Creamos los datos de entrenamiento y de test.
+
+```{r}
+datosmsv.id <- createDataPartition(datosbmadresv$MADRE,p=0.8,list = FALSE)
+datosmsv.tr <- datosbmadresv[datosmsv.id,]
+datosmsv.te <- datosbmadresv[-datosmsv.id,]
+datosmsv.tr_x <- datosmsv.tr
+datosmsv.tr_x$MADRE=NULL
+
+table(datosmsv.tr$MADRE)
+```
+
+### 3.2.1 Modelo ranger
+
+```{r}
+TrainCtrlRanger.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.madresv <- train(x = datosmsv.tr_x,
+                         y = datosmsv.tr$MADRE,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.madresv, "modelorangermadresv.rds")
+```
+
+```{r}
+modelorangermadresv <- readRDS("C:/Users/gonza/Documents/TFM/modelorangermadresv.rds")
+modelorangermadresv
+```
+
+```{r, eval=FALSE}
+rangermsv.prediction <- predict(modelorangermadresv,datosmsv.te)
+rangermsv.confimatrix <- confusionMatrix(rangermsv.prediction, datosmsv.te$MADRE)  
+rangermsv.confimatrix
+```
+
+
+### 3.2.2 Modelo random forest
+
+```{r}
+TrainCtrlRf.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelorf.3cv10.madresv <- train(x = datosmsv.tr_x,
+                         y = datosmsv.tr$MADRE,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.madresv, "modelorfmadresv.rds")
+```
+
+```{r}
+modelorfmadresv <- readRDS("C:/Users/gonza/Documents/TFM/modelorfmadresv.rds")
+modelorfmadresv
+```
+
+```{r, eval=FALSE}
+rfmsv.prediction <- predict(modelorfmadresv,datosmsv.te)
+rfmsv.confimatrix <- confusionMatrix(rfmsv.prediction, datosmsv.te$MADRE)  
+rfmsv.confimatrix
+```
+
+### 3.2.3 Modelo SVM
+
+```{r}
+TrainCtrlSVM.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelorsvm.3cv10.madresv <- train(x = datosmsv.tr_x,
+                         y = datosmsv.tr$MADRE,
+                         method = "svmRadial",  #En este caso el metodo svmRadial
+                         trControl = TrainCtrlSVM.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorsvm.3cv10.madresv, "modelosvmmadresv.rds")
+```
+
+```{r}
+modelosvmmadresv <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmmadresv.rds")
+modelosvmmadresv
+```
+
+```{r, eval=FALSE}
+library(kernlab)
+svmmsv.prediction <- predict(modelosvmmadresv,datosmsv.te)
+svmmsv.confimatrix <- confusionMatrix(svmmsv.prediction, datosmsv.te$MADRE)  
+svmmsv.confimatrix
+```
+
+Observamos que el enfoque multiclase no da lugar a buenos resultados.
+
+## 3.3 GENERACION DE MODELOS MULTIPLES CON DATOS COMPLETOS, SIN SELECCION DE VARIABLES
+
+
+Primero balanceamos los datos 
+
+```{r}
+# Crear una tabla con el recuento de los niveles de la variable "familia"
+tablamadreC <- table(datosmr$MADRE)
+
+# Encontrar el nivel con el menor número de observaciones
+minobsmC <- min(tablamadreC)
+
+# Crear una lista vacía para almacenar los datos balanceados
+datosbmadreC <- data.frame()
+
+# Iterar sobre cada nivel de la variable "familia"
+for (nivel in levels(datosmr$MADRE)) {
+  # Subconjunto de datos para el nivel actual
+  datosnivelmC <- subset(datosmr, MADRE == nivel)
+  
+  # Muestreo aleatorio de observaciones para igualar el número mínimo de observaciones
+  datosmuestrmC <- datosnivelmC[sample(1:nrow(datosnivelmC), minobsmC), ]
+  
+  # Agregar los datos muestreados al conjunto de datos balanceados
+  datosbmadreC <- rbind(datosbmadreC, datosmuestrmC)
+}
+
+# Verificar el balance resultante
+table(datosbmadreC$MADRE)
+```
+
+Creamos los datos de entrenamiento y de test.
+
+```{r}
+datosmC.id <- createDataPartition(datosbmadreC$MADRE,p=0.8,list = FALSE)
+datosmC.tr <- datosbmadreC[datosmC.id,]
+datosmC.te <- datosbmadreC[-datosmC.id,]
+datosmC.tr_x <- datosmC.tr
+datosmC.tr_x$MADRE=NULL
+
+table(datosmC.tr$MADRE)
+```
+
+### 5.3.1 Modelo ranger
+
+```{r, eval=FALSE}
+modeloranger.3cv10.madreC <- train(x = datosmC.tr_x,
+                         y = datosmC.tr$MADRE,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.madreC, "modelorangermadreC.rds")
+```
+
+```{r}
+modelorangermadreC <- readRDS("C:/Users/gonza/Documents/TFM/modelorangermadreC.rds")
+modelorangermadreC
+```
+
+```{r, eval=FALSE}
+rangermC.prediction <- predict(modelorangermadreC,datosmC.te)
+rangermC.confimatrix <- confusionMatrix(rangermC.prediction, datosmC.te$MADRE)  
+rangermC.confimatrix
+```
+
+### 3.3.2 Modelo random forest
+
+```{r, eval=FALSE}
+modelorf.3cv10.madreC <- train(x = datosmC.tr_x,
+                         y = datosmC.tr$MADRE,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.madreC, "modelorfmadreC.rds")
+```
+
+```{r}
+modelorfmadreC <- readRDS("C:/Users/gonza/Documents/TFM/modelorfmadreC.rds")
+modelorfmadreC
+```
+
+```{r, eval=FALSE}
+rfmC.prediction <- predict(modelorfmadreC,datosmC.te)
+rfmC.confimatrix <- confusionMatrix(rfmC.prediction, datosmC.te$MADRE)  
+rfmC.confimatrix
+```
+
+### 3.3.3 Modelo SVM
+
+```{r, eval=FALSE}
+modelorsvm.3cv10.madreC <- train(x = datosmC.tr_x,
+                         y = datosmC.tr$MADRE,
+                         method = "svmRadial",  #En este caso el metodo svmRadial
+                         trControl = TrainCtrlSVM.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorsvm.3cv10.madreC, "modelosvmmadreC.rds")
+```
+
+```{r}
+modelosvmmadreC <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmmadreC.rds")
+modelosvmmadreC
+```
+
+```{r, eval=FALSE}
+svmmC.prediction <- predict(modelosvmmadreC,datosmC.te)
+svmmC.confimatrix <- confusionMatrix(svmmC.prediction, datosmC.te$MADRE)  
+svmmC.confimatrix
+```
+
+## 3.4 COMPARACION DE MODELOS
+
+```{r}
+listamodelosmadres <- list(Rangervarselec=modelorangermadresv,RandomForestvarselec=modelorfmadresv,SupportVectorMachinevarselec=modelosvmmadresv,Rangervarcomp=modelorangermadreC, RandomForestvarcomp=modelorfmadreC, SupportVectorMachinevarcomp=modelosvmmadreC)
+modelos.resamplem <- resamples(listamodelosmadres)
+summary(modelos.resamplem)
+```
+```{r}
+bwplot(modelos.resamplem, main="Precision modelos de clasificacion multiple")
+```
+
+El modelo que obtiene unos mejores resultados en casos de clasificacion multiclase es el algoritmo Ranger, sin embargo, los valores de precision para los tres modelos son muy similares. 
+
+```{r}
+difestm <- diff(modelos.resamplem, adjustment = "none")
+summary(difestm)
+```
+
+# 4. GENERACION DE MODELOS DE CLASIFICACIÓN BINARIA PARA PADRE
+
+## 4.1 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA Antoñeta
+
+### 4.1.1 MODELOS CON DATOS SELECCION DE VARIABLES. 
+
+Primero llevamos a cabo la seleccion de variables
+
+
+```{r}
+datosm1sv <- datosmr
+datosm1sv$MADRE <- fct_other(datosm1sv$MADRE, keep = "S5133", other_level = "OTROS")
+table(datosm1sv$MADRE)
+```
+
+```{r}
+set.seed(12345)
+datosm1svpart <- createDataPartition(datosm1sv$MADRE,p=0.8,list = FALSE)
+datosm1sv.train <- datosm1sv[datosm1svpart,]
+datosm1sv.test <- datosm1sv[-datosm1svpart,]
+```
+
+Balanceamos los datos
+
+```{r}
+datosm1sv.train_x = datosm1sv.train
+
+maskneg = which(datosm1sv.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm1sv.train_x$MADRE == "S5133") #Seleccinamos la clase 
+datosm1sv.train_x = datosm1sv.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm1sv.train_x = datosm1sv.train_x[sample(1:nrow(datosm1sv.train_x),nrow(datosm1sv.train_x)),]
+
+datosm1sv.train_y = datosm1sv.train_x$MADRE
+
+table(datosm1sv.train_x$MADRE)
+```
+
+```{r eval=FALSE}
+subsets <- c(3:21) #Indicamos que cree subgrupos de entre 3 y 21 variables.
+
+seeds <- vector(mode = "list", length = 6)
+
+for(i in 1:10) seeds[[i]] <- sample.int(1000, length(subsets) + 1)
+seeds[[11]] <- sample.int(1000, 1)
+
+ctrl.treebag.rfe.cv.10madrebin <- rfeControl(functions=rfFuncs , 
+                                     method = "cv", 
+                                     number = 10, 
+                                     seeds = seeds,
+                                     returnResamp="final", 
+                                     verbose = TRUE,
+                                     allowParallel = TRUE)
+```
+
+```{r eval=FALSE}
+treebag.rfe.cv.10madrebin <- rfe(MADRE~., data=datosm1sv.train_x,
+                         sizes=subsets, 
+                         rfeControl=ctrl.treebag.rfe.cv.10madrebin)
+```
+
+```{r eval=FALSE}
+treebag.rfe.cv.10madrebin$fit = NULL
+saveRDS(treebag.rfe.cv.10madrebin, "C:/Users/gonza/Documents/TFM/treebag.fre.cv.10madrebin.rds")
+```
+
+```{r}
+varselecmadrebin <- readRDS("C:/Users/gonza/Documents/TFM/treebag.fre.cv.10madrebin.rds")
+varselecmadrebin$optVariables
+```
+
+Las variables seleccionadas son : "RENDI" "PRINT" "NOTA"  "CASC1" "SABOR" "CASCA" "COLOR" "MADUR" "GRAN1" "GRANO" "DUREZ". 
+
+Ahora llevaremos a cabo los modelos con estas variables para comprobar la precision
+
+Primero volveremos a seleccionar de los datos reducidos las variables de interes
+
+```{r}
+datosm1 <- datosmr[, c("MADRE" ,"RENDI" ,"PRINT", "NOTA" , "CASC1" ,"SABOR", "CASCA" ,"COLOR" ,"MADUR" ,"GRAN1" ,"GRANO" ,"DUREZ")]
+datosm1$MADRE <- fct_other(datosm1$MADRE, keep = "S5133", other_level = "OTROS")
+table(datosm1$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm1.id <- createDataPartition(datosm1$MADRE, p=0.7, list = FALSE)
+datosm1.train <- datosm1[datosm1.id,]
+datosm1.test <- datosm1[-datosm1.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm1.train_x = datosm1.train
+
+maskneg = which(datosm1.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm1.train_x$MADRE == "S5133") #Seleccinamos la clase 
+datosm1.train_x = datosm1.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm1.train_x = datosm1.train_x[sample(1:nrow(datosm1.train_x),nrow(datosm1.train_x)),]
+
+datosm1.train_y = datosm1.train_x$MADRE
+
+table(datosm1.train_x$MADRE)
+```
+
+```{r}
+datosm1.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+```{r}
+TrainCtrlRanger.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133madresv <- train(x = datosm1.train_x,
+                         y = datosm1.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133madresv, "modelorangerS5133madresv.rds")
+```
+
+```{r}
+modelorangerS5133madresv <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerS5133madresv.rds")
+modelorangerS5133madresv
+```
+
+```{r, eval=FALSE}
+rangerm1sv.prediction <- predict(modelorangerS5133madresv,datosm1.test)
+rangerm1sv.confimatrix <- confusionMatrix(rangerm1sv.prediction, datosm1.test$MADRE)  
+rangerm1sv.confimatrix
+```
+
+Ahora el modelo rf
+
+```{r}
+TrainCtrlRf.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r}
+modelorf.3cv10.S5133madresv <- train(x = datosm1.train_x,
+                         y = datosm1.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133madresv, "modelorfS5133madresv.rds")
+```
+
+```{r}
+modelorfS5133madresv <- readRDS("C:/Users/gonza/Documents/TFM/modelorfS5133madresv.rds")
+modelorfS5133madresv
+```
+
+```{r, eval=FALSE}
+rfm1sv.prediction <- predict(modelorfS5133madresv,datosm1.test)
+rfm1sv.confimatrix <- confusionMatrix(rfm1sv.prediction, datosm1.test$MADRE)  
+rfm1sv.confimatrix
+```
+
+Ahora el algoritmo SVM
+
+```{r}
+TrainCtrlsvm.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelosvm.3cv10.S5133madresv <- train(x = datosm1.train_x,
+                         y = datosm1.train_y,
+                         method = "svmRadial",  #En este caso el metodo svm
+                         trControl = TrainCtrlsvm.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelosvm.3cv10.S5133madresv, "modelosvmS5133madresv.rds")
+```
+
+```{r}
+modelosvmS5133madresv <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmS5133madresv.rds")
+modelosvmS5133madresv
+```
+
+```{r, eval=FALSE}
+svmm1sv.prediction <- predict(modelosvmS5133madresv,datosm1.test)
+svmm1sv.confimatrix <- confusionMatrix(svmm1sv.prediction, datosm1.test$MADRE)  
+svmm1sv.confimatrix
+```
+
+### 4.1.2 MODELOS CON DATOS COMPLETOS
+
+```{r}
+datosm2 <- datosmr
+datosm2$MADRE <- fct_other(datosm2$MADRE, keep = "S5133", other_level = "OTROS")
+table(datosm2$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm2.id <- createDataPartition(datosm2$MADRE, p=0.7, list = FALSE)
+datosm2.train <- datosm2[datosm2.id,]
+datosm2.test <- datosm2[-datosm2.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm2.train_x = datosm2.train
+
+maskneg = which(datosm2.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas
+maskpos = which(datosm2.train_x$MADRE == "S5133") #Seleccinamos la clase
+datosm2.train_x = datosm2.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm2.train_x = datosm2.train_x[sample(1:nrow(datosm2.train_x),nrow(datosm2.train_x)),]
+
+datosm2.train_y = datosm2.train_x$MADRE
+
+table(datosm2.train_x$MADRE)
+```
+
+```{r}
+datosm2.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133madreC <- train(x = datosm2.train_x,
+                         y = datosm2.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133madreC, "modelorangerS5133madreC.rds")
+```
+
+```{r}
+modelorangerS5133madreC <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerS5133madreC.rds")
+modelorangerS5133madreC
+```
+
+```{r, eval=FALSE}
+rangerm1C.prediction <- predict(modelorangerS5133madreC,datosm2.test)
+rangerm1C.confimatrix <- confusionMatrix(rangerm1C.prediction, datosm2.test$MADRE)  
+rangerm1C.confimatrix
+```
+
+Ahora el modelo rf
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133madreC <- train(x = datosm2.train_x,
+                         y = datosm2.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133madreC, "modelorfS5133madreC.rds")
+```
+
+```{r}
+modelorfS5133madreC <- readRDS("C:/Users/gonza/Documents/TFM/modelorfS5133madreC.rds")
+modelorfS5133madreC
+```
+
+```{r}
+caret::varImp(modelorfS5133madreC)
+```
+
+```{r, eval=FALSE}
+rfm1C.prediction <- predict(modelorfS5133madreC,datosm2.test)
+rfm1C.confimatrix <- confusionMatrix(rfm1C.prediction, datosm2.test$MADRE)  
+rfm1C.confimatrix
+```
+
+Ahora el algoritmo SVM
+
+
+```{r, eval=FALSE}
+modelosvm.3cv10.S5133madreC <- train(x = datosm2.train_x,
+                         y = datosm2.train_y,
+                         method = "svmRadial",  #En este caso el metodo svm
+                         trControl = TrainCtrlsvm.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelosvm.3cv10.S5133madreC, "modelosvmS5133madreC.rds")
+```
+
+```{r}
+modelosvmS5133madreC <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmS5133madreC.rds")
+modelosvmS5133madreC
+```
+
+```{r, eval=FALSE}
+svmm1C.prediction <- predict(modelosvmS5133madreC,datosm2.test)
+svmm1C.confimatrix <- confusionMatrix(svmm1C.prediction, datosm2.test$MADRE)  
+svmm1C.confimatrix
+```
+
+### 4.1.3 COMPARACION DE MODELOS DE CLASIFICACION BINARIA
+
+```{r}
+listamodelosmadresS5133 <- list(Rangervarselec=modelorangerS5133madresv,RandomForestvarselec=modelorfS5133madresv,SupportVectorMachinevarselec=modelosvmS5133madresv,Rangervarcomp=modelorangerS5133madreC, RandomForestvarcomp=modelorfS5133madreC, SupportVectorMachinevarcomp=modelosvmS5133madreC)
+modelos.resampleS5133 <- resamples(listamodelosmadresS5133)
+summary(modelos.resampleS5133)
+```
+```{r}
+bwplot(modelos.resampleS5133, main="Precision modelos clasificacion binarios")
+```
+
+Se observa que para problemas de clasificacion binaria, los algoritmos randomforest obtienen mejores resultados que los SVM. Además, observamos que en este caso la seleccion de variables .
+
+```{r}
+difestS5133 <- diff(modelos.resampleS5133, adjustment = "none")
+summary(difestS5133)
+```
+
+Sabiendo que el mejor enfoque consiste en utilizar todos las variables y generar los modelos con el algoritmo ranger, vamos a llevar a cabo la prediccion de la varible madre.
+
+### 4.1.4 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Muestra inventada
+muestra <- data.frame(FLINT = 5, PRINT = 5, MADUR = 200, FRUTO = 25, CASCA = 80, CASC1 = 2, DUREZ = 3, GRANO = 30, GRAN1 = 1,2 , RENDI = 100, FALLO = 0, FALLP = 0, DOBLE = 0, DOBLP = 0, FORMA = 4, ESPES = 3, RUGOS = 2, COLOR = 3, SABOR = 3, NOTA = 5) 
+
+# Predicción del grupo de la muestra inventada
+prediccionoptimam <- predict(modelorangerS5133madreC, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam)
+```
+
+Nuestra almendro optimo podria pertenecer a dicha madre.
+
+```{r}
+# Muestra distinta
+muestrados <- data.frame(FLINT = 3, PRINT = 3, MADUR = 220, FRUTO = 25, CASCA = 80, CASC1 = 2, DUREZ = 3, GRANO = 30, GRAN1 = 1,2 , RENDI = 80, FALLO = 0, FALLP = 0, DOBLE = 0, DOBLP = 0, FORMA = 4, ESPES = 3, RUGOS = 2, COLOR = 4, SABOR = 3, NOTA = 4)
+
+# Predicción del grupo de la muestra optima
+prediccionoptimados <- predict(modelorangerS5133madreC, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados)
+```
+
+A partir de ahora se llevara a cabo un enfoque de clasificacion binario sin seleccion de variables, utilizando el algoritmo ranger y se usara rf para ver la importancia de las variables. 
+
+## 4.2 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA R1000.
+
+```{r}
+datosm2 <- datosmr
+datosm2$MADRE <- fct_other(datosm2$MADRE, keep = "R1000", other_level = "OTROS")
+table(datosm2$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm2.id <- createDataPartition(datosm2$MADRE, p=0.7, list = FALSE)
+datosm2.train <- datosm2[datosm2.id,]
+datosm2.test <- datosm2[-datosm2.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm2.train_x = datosm2.train
+
+maskneg = which(datosm2.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm2.train_x$MADRE == "R1000") #Seleccinamos la clase 
+datosm2.train_x = datosm2.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm2.train_x = datosm2.train_x[sample(1:nrow(datosm2.train_x),nrow(datosm2.train_x)),]
+
+datosm2.train_y = datosm2.train_x$MADRE
+
+table(datosm2.train_x$MADRE)
+```
+
+```{r}
+datosm2.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.R1000m <- train(x = datosm2.train_x,
+                         y = datosm2.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.R1000m, "modelorangerR1000m.rds")
+```
+
+```{r}
+modelorangerR1000m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerR1000m.rds")
+modelorangerR1000m
+```
+
+```{r, eval=FALSE}
+ranger.predictionm2 <- predict(modelorangerR1000m,datosm2.test)
+ranger.confimatrixm2 <- confusionMatrix(ranger.predictionm2, datosm2.test$MADRE)  
+ranger.confimatrixm2
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.R1000m <- train(x = datosm2.train_x,
+                         y = datosm2.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.R1000m, "modelorfR1000m.rds")
+```
+
+```{r}
+modelorfR1000m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfR1000m.rds")
+modelorfR1000m
+```
+
+```{r}
+caret::varImp(modelorfR1000m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm2 <- predict(modelorfR1000m,datosm2.test)
+rf.confimatrixm2 <- confusionMatrix(rf.predictionm2, datosm2.test$MADRE)  
+rf.confimatrixm2
+```
+
+### 4.2.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam2 <- predict(modelorangerR1000m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam2)
+```
+
+Perteneceria a otro padre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos2 <- predict(modelorangerR1000m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos2)
+```
+
+## 4.3 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA D00-078
+
+```{r}
+datosm3 <- datosmr
+datosm3$MADRE <- fct_other(datosm3$MADRE, keep = "D00i078", other_level = "OTROS")
+table(datosm3$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm3.id <- createDataPartition(datosm3$MADRE, p=0.7, list = FALSE)
+datosm3.train <- datosm3[datosm3.id,]
+datosm3.test <- datosm3[-datosm3.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm3.train_x = datosm3.train
+
+maskneg = which(datosm3.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm3.train_x$MADRE == "D00i078") #Seleccinamos la clase 
+datosm3.train_x = datosm3.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm3.train_x = datosm3.train_x[sample(1:nrow(datosm3.train_x),nrow(datosm3.train_x)),]
+
+datosm3.train_y = datosm3.train_x$MADRE
+
+table(datosm3.train_x$MADRE)
+```
+
+```{r}
+datosm3.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.D00i078 <- train(x = datosm3.train_x,
+                         y = datosm3.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.D00i078, "modelorangerD00i078m.rds")
+```
+
+```{r}
+modelorangerD00i078m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerD00i078m.rds")
+modelorangerD00i078m
+```
+
+```{r, eval=FALSE}
+ranger.predictionm3 <- predict(modelorangerD00i078m,datosm3.test)
+ranger.confimatrixm3 <- confusionMatrix(ranger.predictionm3, datosm3.test$MADRE)  
+ranger.confimatrixm3
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.D00i078 <- train(x = datosm3.train_x,
+                         y = datosm3.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.D00i078, "modelorfD00i078m.rds")
+```
+
+```{r}
+modelorfD00i078m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfD00i078m.rds")
+modelorfD00i078m
+```
+
+```{r}
+caret::varImp(modelorfD00i078m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm3 <- predict(modelorfD00i078m,datosm3.test)
+rf.confimatrixm3 <- confusionMatrix(rf.predictionm3, datosm3.test$MADRE)  
+rf.confimatrixm3
+```
+
+### 4.3.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam3 <- predict(modelorangerD00i078m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam3)
+```
+
+Perteneceria a otro padre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos3 <- predict(modelorangerD00i078m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos3)
+```
+
+## 4.4 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA Antoñeta
+
+```{r}
+datosm4 <- datosmr
+datosm4$MADRE <- fct_other(datosm4$MADRE, keep = "Antoneta", other_level = "OTROS")
+table(datosm4$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm4.id <- createDataPartition(datosm4$MADRE, p=0.7, list = FALSE)
+datosm4.train <- datosm4[datosm4.id,]
+datosm4.test <- datosm4[-datosm4.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm4.train_x = datosm4.train
+
+maskneg = which(datosm4.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm4.train_x$MADRE == "Antoneta") #Seleccinamos la clase 
+datosm4.train_x = datosm4.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm4.train_x = datosm4.train_x[sample(1:nrow(datosm4.train_x),nrow(datosm4.train_x)),]
+
+datosm4.train_y = datosm4.train_x$MADRE
+
+table(datosm4.train_x$MADRE)
+```
+
+```{r}
+datosm4.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.Antonetam <- train(x = datosm4.train_x,
+                         y = datosm4.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.Antonetam, "modelorangerAntonetam.rds")
+```
+
+```{r}
+modelorangerAntonetam <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerAntonetam.rds")
+modelorangerAntonetam
+```
+
+```{r, eval=FALSE}
+ranger.predictionm4 <- predict(modelorangerAntonetam,datosm4.test)
+ranger.confimatrixm4 <- confusionMatrix(ranger.predictionm4, datosm4.test$MADRE)  
+ranger.confimatrixm4
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.Antonetam <- train(x = datosm4.train_x,
+                         y = datosm4.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.Antonetam, "modelorfAntonetam.rds")
+```
+
+```{r}
+modelorfAntonetam <- readRDS("C:/Users/gonza/Documents/TFM/modelorfAntonetam.rds")
+modelorfAntonetam
+```
+
+```{r}
+caret::varImp(modelorfAntonetam)
+```
+
+```{r, eval=FALSE}
+rf.predictionm4 <- predict(modelorfAntonetam,datosm4.test)
+rf.confimatrixm4 <- confusionMatrix(rf.predictionm4, datosm4.test$MADRE)  
+rf.confimatrixm4
+```
+
+### 4.4.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam4 <- predict(modelorangerAntonetam, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam4)
+```
+
+Perteneceria a Antoneta nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos4 <- predict(modelorangerAntonetam, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos4)
+```
+
+## 4.5 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA D00-072
+
+```{r}
+datosm5 <- datosmr
+datosm5$MADRE <- fct_other(datosm5$MADRE, keep = "D00i072", other_level = "OTROS")
+table(datosm5$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm5.id <- createDataPartition(datosm5$MADRE, p=0.7, list = FALSE)
+datosm5.train <- datosm5[datosm5.id,]
+datosm5.test <- datosm5[-datosm5.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm5.train_x = datosm5.train
+
+maskneg = which(datosm5.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm5.train_x$MADRE == "D00i072") #Seleccinamos la clase 
+datosm5.train_x = datosm5.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm5.train_x = datosm5.train_x[sample(1:nrow(datosm5.train_x),nrow(datosm5.train_x)),]
+
+datosm5.train_y = datosm5.train_x$MADRE
+
+table(datosm5.train_x$MADRE)
+```
+
+```{r}
+datosm5.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.D00i072 <- train(x = datosm5.train_x,
+                         y = datosm5.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.D00i072, "modelorangerD00i072m.rds")
+```
+
+```{r}
+modelorangerD00i072m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerD00i072m.rds")
+modelorangerD00i072m
+```
+
+```{r, eval=FALSE}
+ranger.predictionm5 <- predict(modelorangerD00i072m,datosm5.test)
+ranger.confimatrixm5 <- confusionMatrix(ranger.predictionm5, datosm5.test$MADRE)  
+ranger.confimatrixm5
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.D00i072 <- train(x = datosm5.train_x,
+                         y = datosm5.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.D00i072, "modelorfD00i072m.rds")
+```
+
+```{r}
+modelorfD00i072m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfD00i072m.rds")
+modelorfD00i072m
+```
+
+```{r}
+caret::varImp(modelorfD00i072m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm5 <- predict(modelorfD00i072m,datosm5.test)
+rf.confimatrixm5 <- confusionMatrix(rf.predictionm5, datosm5.test$MADRE)  
+rf.confimatrixm5
+```
+
+### 4.5.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam5 <- predict(modelorangerD00i072m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam5)
+```
+
+Perteneceria a otra madre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos5 <- predict(modelorangerD00i072m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos5)
+```
+
+## 4.6 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S4017
+
+```{r}
+datosm6 <- datosmr
+datosm6$MADRE <- fct_other(datosm6$MADRE, keep = "S4017", other_level = "OTROS")
+table(datosm6$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm6.id <- createDataPartition(datosm6$MADRE, p=0.7, list = FALSE)
+datosm6.train <- datosm6[datosm6.id,]
+datosm6.test <- datosm6[-datosm6.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm6.train_x = datosm6.train
+
+maskneg = which(datosm6.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm6.train_x$MADRE == "S4017") #Seleccinamos la clase 
+datosm6.train_x = datosm6.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm6.train_x = datosm6.train_x[sample(1:nrow(datosm6.train_x),nrow(datosm6.train_x)),]
+
+datosm6.train_y = datosm6.train_x$MADRE
+
+table(datosm6.train_x$MADRE)
+```
+
+```{r}
+datosm6.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S4017m <- train(x = datosm6.train_x,
+                         y = datosm6.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S4017m, "modelorangerS4017m.rds")
+```
+
+```{r}
+modelorangerS4017m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerS4017m.rds")
+modelorangerS4017m
+```
+
+```{r, eval=FALSE}
+ranger.predictionm6 <- predict(modelorangerS4017m,datosm6.test)
+ranger.confimatrixm6 <- confusionMatrix(ranger.predictionm6, datosm6.test$MADRE)  
+ranger.confimatrixm6
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S4017m <- train(x = datosm6.train_x,
+                         y = datosm6.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S4017m, "modelorfS4017m.rds")
+```
+
+```{r}
+modelorfS4017m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfS4017m.rds")
+modelorfS4017m
+```
+
+```{r}
+caret::varImp(modelorfS4017m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm6 <- predict(modelorfS4017m,datosm6.test)
+rf.confimatrixm6 <- confusionMatrix(rf.predictionm6, datosm6.test$MADRE)  
+rf.confimatrixm6
+```
+
+### 4.6.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam6 <- predict(modelorangerS4017m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam6)
+```
+
+Perteneceria a otra madre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos6 <- predict(modelorangerS4017m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos6)
+```
+
+## 4.7 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA Marta
+
+```{r}
+datosm7 <- datosmr
+datosm7$MADRE <- fct_other(datosm7$MADRE, keep = "Marta", other_level = "OTROS")
+table(datosm7$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm7.id <- createDataPartition(datosm7$MADRE, p=0.7, list = FALSE)
+datosm7.train <- datosm7[datosm7.id,]
+datosm7.test <- datosm7[-datosm7.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm7.train_x = datosm7.train
+
+maskneg = which(datosm7.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm7.train_x$MADRE == "Marta") #Seleccinamos la clase 
+datosm7.train_x = datosm7.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm7.train_x = datosm7.train_x[sample(1:nrow(datosm7.train_x),nrow(datosm7.train_x)),]
+
+datosm7.train_y = datosm7.train_x$MADRE
+
+table(datosm7.train_x$MADRE)
+```
+
+```{r}
+datosm7.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.Martam <- train(x = datosm7.train_x,
+                         y = datosm7.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.Martam, "modelorangerMartam.rds")
+```
+
+```{r}
+modelorangerMartam <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerMartam.rds")
+modelorangerMartam
+```
+
+```{r, eval=FALSE}
+ranger.predictionm7 <- predict(modelorangerMartam,datosm7.test)
+ranger.confimatrixm7 <- confusionMatrix(ranger.predictionm7, datosm7.test$MADRE)  
+ranger.confimatrixm7
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.Martam <- train(x = datosm7.train_x,
+                         y = datosm7.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.Martam, "modelorfMartam.rds")
+```
+
+```{r}
+modelorfMartam <- readRDS("C:/Users/gonza/Documents/TFM/modelorfMartam.rds")
+modelorfMartam
+```
+
+```{r}
+caret::varImp(modelorfMartam)
+```
+
+```{r, eval=FALSE}
+rf.predictionm7 <- predict(modelorfMartam,datosm7.test)
+rf.confimatrixm7 <- confusionMatrix(rf.predictionm7, datosm7.test$MADRE)  
+rf.confimatrixm7
+```
+
+### 4.7.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam7 <- predict(modelorangerMartam, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam7)
+```
+
+Perteneceria a Marta nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos7 <- predict(modelorangerMartam, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos7)
+```
+
+## 4.8 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S2332
+
+```{r}
+datosm8 <- datosmr
+datosm8$MADRE <- fct_other(datosm8$MADRE, keep = "S2332", other_level = "OTROS")
+table(datosm8$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm8.id <- createDataPartition(datosm8$MADRE, p=0.7, list = FALSE)
+datosm8.train <- datosm8[datosm8.id,]
+datosm8.test <- datosm8[-datosm8.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm8.train_x = datosm8.train
+
+maskneg = which(datosm8.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm8.train_x$MADRE == "S2332") #Seleccinamos la clase 
+datosm8.train_x = datosm8.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm8.train_x = datosm8.train_x[sample(1:nrow(datosm8.train_x),nrow(datosm8.train_x)),]
+
+datosm8.train_y = datosm8.train_x$MADRE
+
+table(datosm8.train_x$MADRE)
+```
+
+```{r}
+datosm8.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S2332m <- train(x = datosm8.train_x,
+                         y = datosm8.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S2332m, "modelorangerS2332m.rds")
+```
+
+```{r}
+modelorangerS2332m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerS2332m.rds")
+modelorangerS2332m
+```
+
+
+```{r, eval=FALSE}
+ranger.predictionm8 <- predict(modelorangerS2332m,datosm8.test)
+ranger.confimatrixm8 <- confusionMatrix(ranger.predictionm8, datosm8.test$MADRE)  
+ranger.confimatrixm8
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S2332m <- train(x = datosm8.train_x,
+                         y = datosm8.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S2332m, "modelorfS2332m.rds")
+```
+
+```{r}
+modelorfS2332m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfS2332m.rds")
+modelorfS2332m
+```
+
+```{r}
+caret::varImp(modelorfS2332m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm8 <- predict(modelorfS2332m,datosm8.test)
+rf.confimatrixm8 <- confusionMatrix(rf.predictionm8, datosm8.test$MADRE)  
+rf.confimatrixm8
+```
+
+### 4.8.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam8 <- predict(modelorangerS2332m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam8)
+```
+
+Perteneceria a otra madre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos8 <- predict(modelorangerS2332m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos8)
+```
+
+## 4.9 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA D00-127
+
+```{r}
+datosm9 <- datosmr
+datosm9$MADRE <- fct_other(datosm9$MADRE, keep = "D00i127", other_level = "OTROS")
+table(datosm9$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm9.id <- createDataPartition(datosm9$MADRE, p=0.7, list = FALSE)
+datosm9.train <- datosm9[datosm9.id,]
+datosm9.test <- datosm9[-datosm9.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm9.train_x = datosm9.train
+
+maskneg = which(datosm9.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm9.train_x$MADRE == "D00i127") #Seleccinamos la clase 
+datosm9.train_x = datosm9.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm9.train_x = datosm9.train_x[sample(1:nrow(datosm9.train_x),nrow(datosm9.train_x)),]
+
+datosm9.train_y = datosm9.train_x$MADRE
+
+table(datosm9.train_x$MADRE)
+```
+
+```{r}
+datosm9.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.D00i127m <- train(x = datosm9.train_x,
+                         y = datosm9.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.D00i127m, "modelorangerD00i127m.rds")
+```
+
+```{r}
+modelorangerD00i127m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerD00i127m.rds")
+modelorangerD00i127m
+```
+
+
+```{r, eval=FALSE}
+ranger.predictionm9 <- predict(modelorangerD00i127m,datosm9.test)
+ranger.confimatrixm9 <- confusionMatrix(ranger.predictionm9, datosm9.test$MADRE)  
+ranger.confimatrixm9
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.D00i127m <- train(x = datosm9.train_x,
+                         y = datosm9.train_y,
+                         method = "rf",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.D00i127m, "modelorfD00i127m.rds")
+```
+
+```{r}
+modelorfD00i127m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfD00i127m.rds")
+modelorfD00i127m
+```
+
+```{r}
+caret::varImp(modelorfD00i127m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm9 <- predict(modelorfD00i127m,datosm9.test)
+rf.confimatrixm9 <- confusionMatrix(rf.predictionm9, datosm9.test$MADRE)  
+rf.confimatrixm9
+```
+
+### 4.9.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam9 <- predict(modelorangerD00i127m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam9)
+```
+
+Perteneceria a otra madre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos9 <- predict(modelorangerD00i127m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos9)
+```
+
+## 4.10 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA D01-467
+
+```{r}
+datosm10 <- datosmr
+datosm10$MADRE <- fct_other(datosm10$MADRE, keep = "D01i467", other_level = "OTROS")
+table(datosm10$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm10.id <- createDataPartition(datosm10$MADRE, p=0.7, list = FALSE)
+datosm10.train <- datosm10[datosm10.id,]
+datosm10.test <- datosm10[-datosm10.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm10.train_x = datosm10.train
+
+maskneg = which(datosm10.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm10.train_x$MADRE == "D01i467") #Seleccinamos la clase 
+datosm10.train_x = datosm10.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm10.train_x = datosm10.train_x[sample(1:nrow(datosm10.train_x),nrow(datosm10.train_x)),]
+
+datosm10.train_y = datosm10.train_x$MADRE
+
+table(datosm10.train_x$MADRE)
+```
+
+```{r}
+datosm10.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.D01i467m <- train(x = datosm10.train_x,
+                         y = datosm10.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.D01i467m, "modelorangerD01i467m.rds")
+```
+
+```{r}
+modelorangerD01i467m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerD01i467m.rds")
+modelorangerD01i467m
+```
+
+```{r}
+ranger.predictionm10 <- predict(modelorangerD01i467m,datosm10.test)
+ranger.confimatrixm10 <- confusionMatrix(ranger.predictionm10, datosm10.test$MADRE)  
+ranger.confimatrixm10
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.D01i467m <- train(x = datosm10.train_x,
+                         y = datosm10.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.D01i467m, "modelorfD01i467m.rds")
+```
+
+```{r}
+modelorfD01i467m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfD01i467m.rds")
+modelorfD01i467m
+```
+
+```{r}
+caret::varImp(modelorfD01i467m)
+```
+
+```{r, eval=FALSE}
+rf.predictionm10 <- predict(modelorfD01i467m,datosm10.test)
+rf.confimatrixm10 <- confusionMatrix(rf.predictionm10, datosm10.test$MADRE)  
+rf.confimatrixm10
+```
+
+### 4.10.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam10 <- predict(modelorangerD01i467m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam10)
+```
+
+Perteneceria a otra madre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos10 <- predict(modelorangerD01i467m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos10)
+```
+
+## 4.11 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA A2198
+
+```{r}
+datosm11 <- datosmr
+datosm11$MADRE <- fct_other(datosm11$MADRE, keep = "A2198", other_level = "OTROS")
+table(datosm11$MADRE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datosm11.id <- createDataPartition(datosm11$MADRE, p=0.7, list = FALSE)
+datosm11.train <- datosm11[datosm11.id,]
+datosm11.test <- datosm11[-datosm11.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datosm11.train_x = datosm11.train
+
+maskneg = which(datosm11.train_x$MADRE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datosm11.train_x$MADRE == "A2198") #Seleccinamos la clase 
+datosm11.train_x = datosm11.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datosm11.train_x = datosm11.train_x[sample(1:nrow(datosm11.train_x),nrow(datosm11.train_x)),]
+
+datosm11.train_y = datosm11.train_x$MADRE
+
+table(datosm11.train_x$MADRE)
+```
+
+```{r}
+datosm11.train_x$MADRE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.A2198m <- train(x = datosm11.train_x,
+                         y = datosm11.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.A2198m, "modelorangerA2198m.rds")
+```
+
+```{r}
+modelorangerA2198m <- readRDS("C:/Users/gonza/Documents/TFM/modelorangerA2198m.rds")
+modelorangerA2198m
+```
+
+```{r, eval=FALSE}
+ranger.predictionm11 <- predict(modelorangerA2198m,datosm11.test)
+ranger.confimatrixm11 <- confusionMatrix(ranger.predictionm11, datosm11.test$MADRE)  
+ranger.confimatrixm11
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.A2198m <- train(x = datosm11.train_x,
+                         y = datosm11.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.A2198m, "modelorfA2198m.rds")
+```
+
+```{r}
+modelorfA2198m <- readRDS("C:/Users/gonza/Documents/TFM/modelorfA2198m.rds")
+modelorfA2198m
+```
+
+```{r}
+caret::varImp(modelorfA2198m)
+```
+
+```{r}
+rf.predictionm11 <- predict(modelorfA2198m,datosm11.test)
+rf.confimatrixm11 <- confusionMatrix(rf.predictionm11, datosm11.test$MADRE)  
+rf.confimatrixm11
+```
+
+### 4.11.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimam11 <- predict(modelorangerA2198m, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptimam11)
+```
+
+Perteneceria a otra madre nuestra planta optima.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimamdos11 <- predict(modelorangerA2198m, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimamdos11)
+```
+
+
+## 4.12 COMPARACIÓN DE MODELOS
+
+```{r}
+listamodelosm <- list(S5133 = modelorangerS5133madreC, R1000 = modelorangerR1000m, D00i078 = modelorangerD00i078m, Antoñeta = modelorangerAntonetam, D00i072 = modelorangerD00i072m, S4017 = modelorangerS4017m, Marta = modelorangerMartam, S2332 = modelorangerS2332m)
+modelos.resamplem <- resamples(listamodelosm)
+summary(modelos.resamplem)
+```
+
+```{r}
+bwplot(modelos.resamplem, main="Precision modelos binarios para la variable madre",  xlim = c(0, 1.2))
+```
+
+
+```{r}
+difestm <- diff(modelos.resamplem, adjustment = "none")
+summary(difestm)
+```
+
+# 5. NUMERO DE VECES QUE APARECE UNA VARIABLE EN EL TOP 5
+
+```{r}
+library(ggplot2)
+# Datos de ejemplo
+nombres_variables <- c("RENDI", "MADUR", "ESPES", "FORMA", "GRAN1", "GRANO", "CASCA", "CASC1", "PRINT", "NOTA", "COLOR", "SABOR", "FLINT", "RUGOS", "DUREZ")
+numero_veces <- c(24, 30, 1, 10, 22, 24, 14, 14, 1, 4, 5, 2, 2, 4, 1)
+
+# Crear el dataframe con los datos
+datosTOP<- data.frame(Nombres = nombres_variables, Veces = numero_veces)
+
+# Crear el histograma
+ggplot(datosTOP, aes(x = Nombres, y = Veces)) +
+  geom_bar(stat = "identity") +
+  xlab("Variables") +
+  ylab("Frecuencia") +
+  ggtitle("Importancia de las variables") +
+  theme_minimal()
+
+```
+

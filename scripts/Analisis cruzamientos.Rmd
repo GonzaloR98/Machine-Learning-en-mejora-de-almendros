@@ -1,0 +1,2143 @@
+---
+title: "Aplicacion de la IA en el diseño de cruzamiento dirigidos. Variable cruzamiento."
+author: "Gonzalo Rivera"
+date: "2023-07-06"
+output:
+  html_document:
+    toc: true 
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. INTRODUCCIÓN
+
+En este caso vamos a llevar a cabo los analisis para los modelos de clasificacion binaria, es decir, realizaremos los modelos siguiendo dos planteamiento,
+el primero seria ver si el modelo es capaz de diferenciar entre un cruce y el resto, el segundo planteamiento seria ver si podemos diferenciar entre dos cruces concretos.
+
+# 2. PREPROCESADO DE DATOS
+
+Primero vamos a limpiar de NA.
+
+```{r, warning=FALSE}
+library(readxl)
+datos <- read_excel("C:/Users/gonza/Documents/TFM/data/datosred.xlsx")
+```
+
+```{r}
+library(mice)
+library(forcats)
+data <- datos[, c("CRUZE", "FLINT", "PRINT", "MADUR", "FRUTO", "CASCA", "CASC1", "DUREZ", "GRANO", "GRAN1", "RENDI", "FALLO", "FALLP", "DOBLE", "DOBLP", "FORMA", "ESPES", "RUGOS", "COLOR", "SABOR", "NOTA")]
+md.pattern(data,rotate.names = T)
+```
+
+```{r}
+library(dplyr)
+datosred <- data[complete.cases(data), ]
+table(datosred$CRUZE)
+```
+
+# 3. TEST DE SHAPIRO-WILK
+
+Vamos a llevart a cabo un saphiro-test para ver la normalidad de las variables
+
+```{r}
+# Función para realizar la prueba de normalidad (Shapiro-Wilk) y generar el gráfico
+perform_normality_test <- function(variable) {
+  # Prueba de normalidad (Shapiro-Wilk)
+  normality_test <- shapiro.test(variable)
+  
+  # Gráfico de histograma y curva de densidad
+  hist(variable, freq = FALSE, main = "Histograma y Curva de Densidad")
+  lines(density(variable), col = "red")
+  
+  # Retornar el resultado de la prueba de normalidad
+  return(normality_test)
+}
+
+# Aplicar la función a todas las variables del conjunto de datos
+normality_results <- lapply(datosred[, 2:21], perform_normality_test)
+
+# Imprimir los resultados de las pruebas de normalidad
+names(normality_results) <- colnames(data[, 2:21])
+print(normality_results)
+```
+
+Podemos observar como no se distribuyen de forma normal. Tendremos que utilizar métodos no paramétricos. 
+
+# 4. ANALISIS DE CORRELACION
+
+```{r}
+library(corrplot)
+library(ggplot2)
+# Calcular la matriz de correlación
+datosred.cor <- cor(datosred[,2:21], method = "spearman")
+round(datosred.cor, digits = 2) #Redondeamos los datos a dos digitos. 
+```
+
+Utilizamos la función corrplot para representar los resultados y observar las correlaciones existentes entre las distintas variables numericas. 
+
+```{r}
+corrplot(datosred.cor, tl.cex = 0.45, method = "circle", shade.col = NA, tl.col = "black", tl.srt = 45, order = "AOE", diag = T, win.asp = 0.75)
+```
+
+Aqui observamos las correlaciones entre las distintas variables. 
+
+```{r}
+corrplot(datosred.cor, tl.cex = 0.45, method = "number", shade.col = NA, tl.col = "black", tl.srt = 45, order = "AOE", diag = T)
+```
+
+
+# 5. GENERACION DE MODELOS MULTIPLES PARA CRUCE
+
+
+Seleccionamos los cruces con mas de 15 observaciones
+
+```{r}
+# Calcular el recuento de observaciones por cruce
+recuentocruces <- table(datosred$CRUZE)
+
+# Obtener los cruces con más de 15 observaciones
+crucessel <- names(recuentocruces)[recuentocruces > 15]
+
+# Crear un nuevo conjunto de datos con los cruces seleccionados
+datosc <- datosred[datosred$CRUZE %in% crucessel, ]
+```
+
+```{r}
+datosc$CRUZE <- as.factor(datosc$CRUZE)
+table(datosc$CRUZE)
+str(datosc)
+```
+
+Ahora visualizamos de forma grafica el numero de niveles por cruce
+
+```{r}
+ggplot(datosc, aes(x = CRUZE)) +
+  geom_bar() +
+  labs(x = "Cruce", y = "Número de observaciones", title = "Número de observaciones por nivel de cruce") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 5.1 SELECCION DE VARIABLES POR RANDOM FOREST
+
+En este punto podemos llevar a cabo la seleccion de variables para luego comprobar los resultados.
+
+```{r}
+library(caret)
+set.seed(12345)
+datoscpart <- createDataPartition(datosc$CRUZE,p=0.8,list = FALSE)
+datosc.train <- datosc[datoscpart,]
+datosc.test <- datosc[-datoscpart,]
+```
+
+```{r eval=FALSE}
+subsets <- c(3:21) #Indicamos que cree subgrupos de entre 3 y 21 variables.
+
+seeds <- vector(mode = "list", length = 6)
+
+for(i in 1:10) seeds[[i]] <- sample.int(1000, length(subsets) + 1)
+seeds[[11]] <- sample.int(1000, 1)
+
+ctrl.treebag.rfe.cv.10 <- rfeControl(functions=rfFuncs , 
+                                     method = "cv", 
+                                     number = 10, 
+                                     seeds = seeds,
+                                     returnResamp="final", 
+                                     verbose = TRUE,
+                                     allowParallel = TRUE)
+```
+
+```{r eval=FALSE}
+treebag.rfe.cv.10 <- rfe(CRUZE~., data=datosc.train,
+                         sizes=subsets, 
+                         rfeControl=ctrl.treebag.rfe.cv.10)
+```
+
+Le quitamos el contenido de fit, para que no tenga tanto peso el archivo y guardammos el rds.
+
+```{r eval=FALSE}
+treebag.rfe.cv.10$fit = NULL
+saveRDS(treebag.rfe.cv.10, "C:/Users/gonza/Documents/TFM/treebag.fre.cv.10.rds")
+```
+
+```{r}
+varseleccruce <- readRDS("C:/Users/gonza/Documents/TFM/treebag.fre.cv.10.rds")
+varseleccruce$optVariables
+```
+
+Nuestro modelo nos dice que las variables que mayor importancia tienen son: "MADUR" "GRAN1" "GRANO" "RENDI" "SABOR" "CASCA" "CASC1" "FORMA" "NOTA"  "COLOR" "PRINT" "DUREZ" "ESPES" "RUGOS" "FLINT"
+
+```{r}
+plot(varseleccruce)
+varseleccruce$results
+varseleccruce$bestSubset
+```
+
+
+
+## 5.2 GENERACION DE MODELOS MULTIPLES CON DATOS SELECCION DE VARIABLES
+
+```{r}
+datoscsv <- datosc[,c("CRUZE", "MADUR", "GRAN1", "GRANO", "RENDI", "SABOR", "CASCA", "CASC1", "FORMA", "NOTA", "COLOR", "PRINT", "DUREZ", "ESPES", "RUGOS", "FLINT")]
+```
+
+Primero balanceamos los datos 
+
+```{r}
+# Crear una tabla con el recuento de los niveles de la variable "cruce"
+tablacrucesv <- table(datoscsv$CRUZE)
+
+# Encontrar el nivel con el menor número de observaciones
+minobscsv <- min(tablacrucesv)
+
+# Crear una lista vacía para almacenar los datos balanceados
+datosbcrucesv <- data.frame()
+
+# Iterar sobre cada nivel de la variable "cruce"
+for (nivel in levels(datoscsv$CRUZE)) {
+  # Subconjunto de datos para el nivel actual
+  datosnivelcsv <- subset(datoscsv, CRUZE == nivel)
+  
+  # Muestreo aleatorio de observaciones para igualar el número mínimo de observaciones
+  datosmuestrcsv <- datosnivelcsv[sample(1:nrow(datosnivelcsv), minobscsv), ]
+  
+  # Agregar los datos muestreados al conjunto de datos balanceados
+  datosbcrucesv <- rbind(datosbcrucesv, datosmuestrcsv)
+}
+
+# Verificar el balance resultante
+table(datosbcrucesv$CRUZE)
+```
+
+Creamos los datos de entrenamiento y de test.
+
+```{r}
+datoscsv.id <- createDataPartition(datosbcrucesv$CRUZE,p=0.8,list = FALSE)
+datoscsv.tr <- datosbcrucesv[datoscsv.id,]
+datoscsv.te <- datosbcrucesv[-datoscsv.id,]
+datoscsv.tr_x <- datoscsv.tr
+datoscsv.tr_x$CRUZE=NULL
+
+table(datoscsv.tr$CRUZE)
+```
+
+### 5.2.1 Modelo ranger
+
+```{r}
+TrainCtrlRanger.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.crucesv <- train(x = datoscsv.tr_x,
+                         y = datoscsv.tr$CRUZE,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.crucesv, "modelorangercrucesv.rds")
+```
+
+```{r}
+modelorangercrucesv <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesv.rds")
+modelorangercrucesv
+```
+
+```{r, echo=FALSE}
+rangercsv.prediction <- predict(modelorangercrucesv,datoscsv.te)
+rangercsv.confimatrix <- confusionMatrix(rangercsv.prediction, datoscsv.te$CRUZE)  
+rangercsv.confimatrix
+```
+
+### 5.2.2 Modelo random forest
+
+```{r}
+TrainCtrlRf.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelorf.3cv10.crucesv <- train(x = datoscsv.tr_x,
+                         y = datoscsv.tr$CRUZE,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.crucesv, "modelorfcrucesv.rds")
+```
+
+```{r}
+modelorfcrucesv <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesv.rds")
+modelorfcrucesv
+```
+
+```{r, echo=FALSE}
+rfcsv.prediction <- predict(modelorfcrucesv,datoscsv.te)
+rfcsv.confimatrix <- confusionMatrix(rfcsv.prediction, datoscsv.te$CRUZE)  
+rfcsv.confimatrix
+```
+
+### 5.2.3 Modelo SVM
+
+```{r}
+TrainCtrlSVM.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelorsvm.3cv10.crucesv <- train(x = datoscsv.tr_x,
+                         y = datoscsv.tr$CRUZE,
+                         method = "svmRadial",  #En este caso el metodo svmRadial
+                         trControl = TrainCtrlSVM.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorsvm.3cv10.crucesv, "modelosvmcrucesv.rds")
+```
+
+```{r}
+modelosvmcrucesv <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmcrucesv.rds")
+modelosvmcrucesv
+```
+
+```{r, echo=FALSE}
+library(kernlab)
+svmcsv.prediction <- predict(modelosvmcrucesv,datoscsv.te)
+svmcsv.confimatrix <- confusionMatrix(svmcsv.prediction, datoscsv.te$CRUZE)  
+svmcsv.confimatrix
+```
+
+Observamos que el enfoque multiclase no da lugar a buenos resultados.
+
+## 5.3 GENERACION DE MODELOS MULTIPLES CON DATOS COMPLETOS, SIN SELECCION DE VARIABLES
+
+
+Primero balanceamos los datos 
+
+```{r}
+# Crear una tabla con el recuento de los niveles de la variable "cruce"
+tablacruceC <- table(datosc$CRUZE)
+
+# Encontrar el nivel con el menor número de observaciones
+minobscC <- min(tablacruceC)
+
+# Crear una lista vacía para almacenar los datos balanceados
+datosbcruceC <- data.frame()
+
+# Iterar sobre cada nivel de la variable "cruce"
+for (nivel in levels(datosc$CRUZE)) {
+  # Subconjunto de datos para el nivel actual
+  datosnivelcC <- subset(datosc, CRUZE == nivel)
+  
+  # Muestreo aleatorio de observaciones para igualar el número mínimo de observaciones
+  datosmuestrcC <- datosnivelcC[sample(1:nrow(datosnivelcC), minobscC), ]
+  
+  # Agregar los datos muestreados al conjunto de datos balanceados
+  datosbcruceC <- rbind(datosbcruceC, datosmuestrcC)
+}
+
+# Verificar el balance resultante
+table(datosbcruceC$CRUZE)
+```
+
+Creamos los datos de entrenamiento y de test.
+
+```{r}
+datoscC.id <- createDataPartition(datosbcruceC$CRUZE,p=0.8,list = FALSE)
+datoscC.tr <- datosbcruceC[datoscC.id,]
+datoscC.te <- datosbcruceC[-datoscC.id,]
+datoscC.tr_x <- datoscC.tr
+datoscC.tr_x$CRUZE=NULL
+
+table(datoscC.tr$CRUZE)
+```
+
+### 5.3.1 Modelo ranger
+
+```{r, eval=FALSE}
+modeloranger.3cv10.cruceC <- train(x = datoscC.tr_x,
+                         y = datoscC.tr$CRUZE,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.cruceC, "modelorangercruceC.rds")
+```
+
+```{r}
+modelorangercruceC <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercruceC.rds")
+modelorangercruceC
+```
+
+```{r, echo=FALSE}
+rangercC.prediction <- predict(modelorangercruceC,datoscC.te)
+rangercC.confimatrix <- confusionMatrix(rangercC.prediction, datoscC.te$CRUZE)  
+rangercC.confimatrix
+```
+
+### 5.3.2 Modelo random forest
+
+```{r, eval=FALSE}
+modelorf.3cv10.cruceC <- train(x = datoscC.tr_x,
+                         y = datoscC.tr$CRUZE,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.cruceC, "modelorfcruceC.rds")
+```
+
+```{r}
+modelorfcruceC <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcruceC.rds")
+modelorfcruceC
+```
+
+```{r, echo=FALSE}
+rfcC.prediction <- predict(modelorfcruceC,datoscC.te)
+rfcC.confimatrix <- confusionMatrix(rfcC.prediction, datoscC.te$CRUZE)  
+rfcC.confimatrix
+```
+
+### 5.3.3 Modelo SVM
+
+```{r, eval=FALSE}
+modelorsvm.3cv10.cruceC <- train(x = datoscC.tr_x,
+                         y = datoscC.tr$CRUZE,
+                         method = "svmRadial",  #En este caso el metodo svmRadial
+                         trControl = TrainCtrlSVM.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorsvm.3cv10.cruceC, "modelosvmcruceC.rds")
+```
+
+```{r}
+modelosvmcruceC <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmcruceC.rds")
+modelosvmcruceC
+```
+
+```{r, echo=FALSE}
+svmcC.prediction <- predict(modelosvmcruceC,datoscC.te)
+svmcC.confimatrix <- confusionMatrix(svmcC.prediction, datoscC.te$CRUZE)  
+svmcC.confimatrix
+```
+
+## 5.4 COMPARACION DE MODELOS
+
+```{r}
+listamodeloscruces <- list(Rangervarselec=modelorangercrucesv,RandomForestvarselec=modelorfcrucesv,SupportVectorMachinevarselec=modelosvmcrucesv,Rangervarcomp=modelorangercruceC, RandomForestvarcomp=modelorfcruceC, SupportVectorMachinevarcomp=modelosvmcruceC)
+modelos.resample <- resamples(listamodeloscruces)
+summary(modelos.resample)
+```
+```{r}
+bwplot(modelos.resample, main="Precision modelos de clasificacion multiple")
+```
+
+El modelo que obtiene unos mejores resultados en casos de clasificacion multiclase es el algoritmo Ranger, con los datos de la seleccion de variables. 
+
+```{r}
+difest <- diff(modelos.resample, adjustment = "none")
+summary(difest)
+```
+
+# 6. GENERACION DE MODELOS DE CLASIFICACIÓN BINARIA PARA CRUCE
+
+## 6.1 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S5133 X A2198.
+
+### 6.1.1 MODELOS CON DATOS SELECCION DE VARIABLES. 
+
+Primero llevamos a cabo la seleccion de variables
+
+
+```{r}
+library(forcats)
+datos1sv <- datosc
+datos1sv$CRUZE <- fct_other(datos1sv$CRUZE, keep = "S5133XA2198", other_level = "OTROS")
+table(datos1sv$CRUZE)
+```
+
+```{r}
+set.seed(12345)
+datos1svpart <- createDataPartition(datos1sv$CRUZE,p=0.8,list = FALSE)
+datos1sv.train <- datos1sv[datos1svpart,]
+datos1sv.test <- datos1sv[-datos1svpart,]
+```
+
+Balanceamos los datos
+
+```{r}
+datos1sv.train_x = datos1sv.train
+
+maskneg = which(datos1sv.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datos1sv.train_x$CRUZE == "S5133XA2198") #Seleccinamos la clase 
+datos1sv.train_x = datos1sv.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos1sv.train_x = datos1sv.train_x[sample(1:nrow(datos1sv.train_x),nrow(datos1sv.train_x)),]
+
+datos1sv.train_y = datos1sv.train_x$CRUZE
+
+table(datos1sv.train_x$CRUZE)
+```
+
+```{r eval=FALSE}
+subsets <- c(3:20) #Indicamos que cree subgrupos de entre 3 y 20 variables.
+
+seeds <- vector(mode = "list", length = 6)
+
+for(i in 1:10) seeds[[i]] <- sample.int(1000, length(subsets) + 1)
+seeds[[11]] <- sample.int(1000, 1)
+
+ctrl.treebag.rfe.cv.10bin <- rfeControl(functions=rfFuncs , 
+                                     method = "cv", 
+                                     number = 10, 
+                                     seeds = seeds,
+                                     returnResamp="final", 
+                                     verbose = TRUE,
+                                     allowParallel = TRUE)
+```
+
+```{r eval=FALSE}
+treebag.rfe.cv.10bin <- rfe(CRUZE~., data=datos1sv.train_x,
+                         sizes=subsets, 
+                         rfeControl=ctrl.treebag.rfe.cv.10bin)
+```
+
+```{r eval=FALSE}
+treebag.rfe.cv.10bin$fit = NULL
+saveRDS(treebag.rfe.cv.10bin, "C:/Users/gonza/Documents/TFM/treebag.fre.cv.10bin.rds")
+```
+
+```{r}
+varseleccrucebin <- readRDS("C:/Users/gonza/Documents/TFM/treebag.fre.cv.10bin.rds")
+varseleccrucebin$optVariables
+```
+
+Las variables seleccionadas son : "RENDI" "ESPES" "MADUR" "GRANO" "CASCA" "CASC1" "DUREZ" "GRAN1" "RUGOS" "FORMA" "PRINT" "COLOR" "FALLP" "FLINT" "FALLO" "FRUTO" "DOBLE" "NOTA"  "SABOR". 
+
+Ahora llevaremos a cabo los modelos con estas variables para comprobar la precision
+
+Primero volveremos a seleccionar de los datos reducidos las variables de interes
+
+```{r}
+datos1 <- datosc[, c("CRUZE", "RENDI" ,"ESPES", "MADUR" ,"GRANO" ,"CASCA" ,"CASC1" ,"DUREZ", "GRAN1" ,"RUGOS" ,"FORMA" ,"PRINT","COLOR" ,"FALLP" ,"FLINT", "FALLO", "FRUTO", "DOBLE" ,"NOTA" , "SABOR")]
+datos1$CRUZE <- fct_other(datos1$CRUZE, keep = "S5133XA2198", other_level = "OTROS")
+table(datos1$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos1.id <- createDataPartition(datos1$CRUZE, p=0.7, list = FALSE)
+datos1.train <- datos1[datos1.id,]
+datos1.test <- datos1[-datos1.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos1.train_x = datos1.train
+
+maskneg = which(datos1.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datos1.train_x$CRUZE == "S5133XA2198") #Seleccinamos la clase
+datos1.train_x = datos1.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos1.train_x = datos1.train_x[sample(1:nrow(datos1.train_x),nrow(datos1.train_x)),]
+
+datos1.train_y = datos1.train_x$CRUZE
+
+table(datos1.train_x$CRUZE)
+```
+
+```{r}
+datos1.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+```{r}
+TrainCtrlRanger.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133XA2198sv <- train(x = datos1.train_x,
+                         y = datos1.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133XA2198sv, "modelorangercrucesvbin.rds")
+```
+
+```{r}
+modelorangercrucesvbin <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesvbin.rds")
+modelorangercrucesvbin
+```
+
+
+```{r, echo=FALSE}
+ranger1sv.prediction <- predict(modelorangercrucesvbin,datos1.test)
+ranger1sv.confimatrix <- confusionMatrix(ranger1sv.prediction, datos1.test$CRUZE)  
+ranger1sv.confimatrix
+```
+
+Ahora el modelo rf
+
+```{r}
+TrainCtrlRf.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133XA2198sv <- train(x = datos1.train_x,
+                         y = datos1.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133XA2198sv, "modelorfcrucesvbin.rds")
+```
+
+```{r}
+modelorfcrucesvbin <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesvbin.rds")
+modelorfcrucesvbin
+```
+
+```{r, echo=FALSE}
+rf1sv.prediction <- predict(modelorfcrucesvbin,datos1.test)
+rf1sv.confimatrix <- confusionMatrix(rf1sv.prediction, datos1.test$CRUZE)  
+rf1sv.confimatrix
+```
+
+Ahora el algoritmo SVM
+
+```{r}
+TrainCtrlsvm.3cv10 <- trainControl( # Crosvalidación de 10 pliegues con 3 repeticiones
+  method = "repeatedcv",
+  number = 10,
+  repeats = 3,
+  verboseIter=TRUE)
+```
+
+
+```{r, eval=FALSE}
+modelosvm.3cv10.S5133XA2198sv <- train(x = datos1.train_x,
+                         y = datos1.train_y,
+                         method = "svmRadial",  #En este caso el metodo svm
+                         trControl = TrainCtrlsvm.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelosvm.3cv10.S5133XA2198sv, "modelosvmcrucesvbin.rds")
+```
+
+```{r}
+modelosvmcrucesvbin <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmcrucesvbin.rds")
+modelosvmcrucesvbin
+```
+
+```{r, echo=FALSE}
+svm1sv.prediction <- predict(modelosvmcrucesvbin,datos1.test)
+svm1sv.confimatrix <- confusionMatrix(svm1sv.prediction, datos1.test$CRUZE)  
+svm1sv.confimatrix
+```
+
+### 6.1.2 MODELOS CON DATOS COMPLETOS
+
+```{r}
+datos2 <- datosc
+datos2$CRUZE <- fct_other(datos2$CRUZE, keep = "S5133XA2198", other_level = "OTROS")
+table(datos2$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos2.id <- createDataPartition(datos2$CRUZE, p=0.7, list = FALSE)
+datos2.train <- datos2[datos2.id,]
+datos2.test <- datos2[-datos2.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos2.train_x = datos2.train
+
+maskneg = which(datos2.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas
+maskpos = which(datos2.train_x$CRUZE == "S5133XA2198") #Seleccinamos la clase
+datos2.train_x = datos2.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos2.train_x = datos2.train_x[sample(1:nrow(datos2.train_x),nrow(datos2.train_x)),]
+
+datos2.train_y = datos2.train_x$CRUZE
+
+table(datos2.train_x$CRUZE)
+```
+
+```{r}
+datos2.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133XA2198C <- train(x = datos2.train_x,
+                         y = datos2.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133XA2198C, "modelorangercruceCbin.rds")
+```
+
+```{r}
+modelorangercruceCbin <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercruceCbin.rds")
+modelorangercruceCbin
+```
+
+```{r, echo=FALSE}
+ranger1C.prediction <- predict(modelorangercruceCbin,datos2.test)
+ranger1C.confimatrix <- confusionMatrix(ranger1C.prediction, datos2.test$CRUZE)  
+ranger1C.confimatrix
+```
+
+Ahora el modelo rf
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133XA2198C <- train(x = datos2.train_x,
+                         y = datos2.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133XA2198C, "modelorfcruceCbin.rds")
+```
+
+```{r}
+modelorfcruceCbin <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcruceCbin.rds")
+modelorfcruceCbin
+```
+
+```{r}
+caret::varImp(modelorfcruceCbin)
+```
+
+```{r, echo=FALSE}
+rf1C.prediction <- predict(modelorfcruceCbin,datos2.test)
+rf1C.confimatrix <- confusionMatrix(rf1C.prediction, datos2.test$CRUZE)  
+rf1C.confimatrix
+```
+
+Ahora el algoritmo SVM
+
+
+```{r, eval=FALSE}
+modelosvm.3cv10.S5133XA2198C <- train(x = datos2.train_x,
+                         y = datos2.train_y,
+                         method = "svmRadial",  #En este caso el metodo svm
+                         trControl = TrainCtrlsvm.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelosvm.3cv10.S5133XA2198C, "modelosvmcruceCbin.rds")
+```
+
+```{r}
+modelosvmcruceCbin <- readRDS("C:/Users/gonza/Documents/TFM/modelosvmcruceCbin.rds")
+modelosvmcruceCbin
+```
+
+```{r,echo=FALSE}
+svm1C.prediction <- predict(modelosvmcruceCbin,datos2.test)
+svm1C.confimatrix <- confusionMatrix(svm1C.prediction, datos2.test$CRUZE)  
+svm1C.confimatrix
+```
+
+# 6.1.3 COMPARACION DE MODELOS DE CLASIFICACION BINARIA
+
+```{r}
+listamodeloscrucesS5133XA2198 <- list(Rangervarselec=modelorangercrucesvbin,RandomForestvarselec=modelorfcrucesvbin,SupportVectorMachinevarselec=modelosvmcrucesvbin,Rangervarcomp=modelorangercruceCbin, RandomForestvarcomp=modelorfcruceCbin, SupportVectorMachinevarcomp=modelosvmcruceCbin)
+modelos.resampleS5133XA2198 <- resamples(listamodeloscrucesS5133XA2198)
+summary(modelos.resampleS5133XA2198)
+```
+```{r}
+bwplot(modelos.resampleS5133XA2198, main="Precision modelos clasificacion binarios")
+```
+
+Se observa que para problemas de clasificacion binaria, los algoritmos randomforest obtienen mejores resultados que los SVM. Además, observamos que cuando realizamos la seleccion de variables, se obtienen mejores resultados, sim embargo no hay mucha diferencia. Dado que nos interesa indicar todas las caracteristicas a nuestro almendro, utilizaremos todas las variables ya que no hay tanta diferencia en los resultados.
+
+```{r}
+difestS5133XA2198 <- diff(modelos.resampleS5133XA2198, adjustment = "none")
+summary(difestS5133XA2198)
+```
+
+Sabiendo que el mejor enfoque consiste en utilizar todos las variables y generar los modelos con el algoritmo ranger, vamos a llevar a cabo la prediccion
+
+### 6.1.4 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Muestra optima de almendra
+muestra <- data.frame(FLINT = 5, PRINT = 5, MADUR = 200, FRUTO = 25, CASCA = 80, CASC1 = 2, DUREZ = 3, GRANO = 30, GRAN1 = 1,2 , RENDI = 100, FALLO = 0, FALLP = 0, DOBLE = 0, DOBLP = 0, FORMA = 4, ESPES = 3, RUGOS = 2, COLOR = 3, SABOR = 3, NOTA = 5)
+
+# Predicción del grupo de la muestra optima
+prediccionoptima <- predict(modelorangercruceCbin, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima)
+```
+
+```{r}
+# Muestra distinta
+muestrados <- data.frame(FLINT = 3, PRINT = 3, MADUR = 220, FRUTO = 25, CASCA = 80, CASC1 = 2, DUREZ = 3, GRANO = 30, GRAN1 = 1,2 , RENDI = 80, FALLO = 0, FALLP = 0, DOBLE = 0, DOBLP = 0, FORMA = 4, ESPES = 3, RUGOS = 2, COLOR = 4, SABOR = 3, NOTA = 4)
+
+# Predicción del grupo de la muestra optima
+prediccionoptimados <- predict(modelorangercruceCbin, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados)
+```
+
+A partir de ahora se llevara a cabo un enfoque de clasificacion binario sin seleccion de variables, utilizando el algoritmo ranger y se usara rf para ver la importancia de las variables. 
+
+
+## 6.2 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S5133XR1000.
+
+```{r}
+datos2 <- datosc
+datos2$CRUZE <- fct_other(datos2$CRUZE, keep = "S5133XR1000", other_level = "OTROS")
+table(datos2$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos2.id <- createDataPartition(datos2$CRUZE, p=0.7, list = FALSE)
+datos2.train <- datos2[datos2.id,]
+datos2.test <- datos2[-datos2.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos2.train_x = datos2.train
+
+maskneg = which(datos2.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos2.train_x$CRUZE == "S5133XR1000") #Seleccinamos la clase UTR
+datos2.train_x = datos2.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos2.train_x = datos2.train_x[sample(1:nrow(datos2.train_x),nrow(datos2.train_x)),]
+
+datos2.train_y = datos2.train_x$CRUZE
+
+table(datos2.train_x$CRUZE)
+```
+
+```{r}
+datos2.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133XR1000 <- train(x = datos2.train_x,
+                         y = datos2.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133XR1000, "modelorangercrucesS5133XR1000.rds")
+```
+
+```{r}
+modelorangercrucesS5133XR1000 <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesS5133XR1000.rds")
+modelorangercrucesS5133XR1000
+```
+
+```{r, echo=FALSE}
+ranger.prediction2 <- predict(modelorangercrucesS5133XR1000,datos2.test)
+ranger.confimatrix2 <- confusionMatrix(ranger.prediction2, datos2.test$CRUZE)  
+ranger.confimatrix2
+```
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133XR1000 <- train(x = datos2.train_x,
+                         y = datos2.train_y,
+                         method = "rf",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133XR1000, "modelorfcrucesS5133XR1000.rds")
+```
+
+```{r}
+modelorfcrucesS5133XR1000 <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesS5133XR1000.rds")
+modelorfcrucesS5133XR1000
+```
+
+```{r}
+caret::varImp(modelorfcrucesS5133XR1000)
+```
+
+```{r, echo=FALSE}
+rf.prediction2 <- predict(modelorfcrucesS5133XR1000,datos2.test)
+rf.confimatrix2 <- confusionMatrix(rf.prediction2, datos2.test$CRUZE)  
+rf.confimatrix2
+```
+
+### 6.2.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra optima
+prediccionoptima2 <- predict(modelorangercrucesS5133XR1000, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima2)
+```
+Perteneceria a otro cruzamiento nuestro almendro optimo. 
+
+```{r}
+# Predicción del grupo de la muestra distinta
+prediccionoptimados2 <- predict(modelorangercrucesS5133XR1000, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados2)
+```
+
+Pertenceria a otro cruzamiento
+
+## 6.3 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA AntonetaXMarcona 
+
+```{r}
+datos3 <- datosc
+datos3$CRUZE <- fct_other(datos3$CRUZE, keep = "AntonetaXMarcona", other_level = "OTROS")
+table(datos3$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos3.id <- createDataPartition(datos3$CRUZE, p=0.7, list = FALSE)
+datos3.train <- datos3[datos3.id,]
+datos3.test <- datos3[-datos3.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos3.train_x = datos3.train
+
+maskneg = which(datos3.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos3.train_x$CRUZE == "AntonetaXMarcona") #Seleccinamos la clase UTR
+datos3.train_x = datos3.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos3.train_x = datos3.train_x[sample(1:nrow(datos3.train_x),nrow(datos3.train_x)),]
+
+datos3.train_y = datos3.train_x$CRUZE
+
+table(datos3.train_x$CRUZE)
+```
+
+```{r}
+datos3.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.AntonetaXMarcona <- train(x = datos3.train_x,
+                         y = datos3.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.AntonetaXMarcona, "modelorangercrucesAntonetaXMarcona.rds")
+```
+
+```{r}
+modelorangercrucesAntonetaXMarcona <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesAntonetaXMarcona.rds")
+modelorangercrucesAntonetaXMarcona
+```
+
+```{r, echo=FALSE}
+ranger.prediction3 <- predict(modelorangercrucesAntonetaXMarcona,datos3.test)
+ranger.confimatrix3 <- confusionMatrix(ranger.prediction3, datos3.test$CRUZE)  
+ranger.confimatrix3
+```
+
+Obtenemos valores de precision del 79% lo cual indica buenos resultados.
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.AntonetaXMarcona <- train(x = datos3.train_x,
+                         y = datos3.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.AntonetaXMarcona, "modelorfcrucesAntonetaXMarcona.rds")
+```
+
+```{r}
+modelorfcrucesAntonetaXMarcona <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesAntonetaXMarcona.rds")
+modelorfcrucesAntonetaXMarcona
+```
+
+```{r}
+caret::varImp(modelorfcrucesAntonetaXMarcona)
+```
+
+```{r, echo=FALSE}
+rf.prediction3 <- predict(modelorfcrucesAntonetaXMarcona,datos3.test)
+rf.confimatrix3 <- confusionMatrix(rf.prediction3, datos3.test$CRUZE)  
+rf.confimatrix3
+```
+
+### 6.3.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima3 <- predict(modelorangercrucesAntonetaXMarcona, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima3)
+```
+
+Perteneceria a esta familia nuestro cruzamiento optimo. 
+
+```{r}
+# Predicción del grupo de la muestra optima
+prediccionoptimados3 <- predict(modelorangercrucesAntonetaXMarcona, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados3)
+```
+
+## 6.4 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S4017XMarcona
+
+Convertimos las clases
+
+```{r}
+datos4 <- datosc
+datos4$CRUZE <- fct_other(datos4$CRUZE, keep = "S4017XMarcona", other_level = "OTROS")
+table(datos4$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos4.id <- createDataPartition(datos4$CRUZE, p=0.7, list = FALSE)
+datos4.train <- datos4[datos4.id,]
+datos4.test <- datos4[-datos4.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos4.train_x = datos4.train
+
+maskneg = which(datos4.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas
+maskpos = which(datos4.train_x$CRUZE == "S4017XMarcona") #Seleccinamos la clase 
+datos4.train_x = datos4.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos4.train_x = datos4.train_x[sample(1:nrow(datos4.train_x),nrow(datos4.train_x)),]
+
+datos4.train_y = datos4.train_x$CRUZE
+
+table(datos4.train_x$CRUZE)
+```
+
+```{r}
+datos4.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S4017XMarcona <- train(x = datos4.train_x,
+                         y = datos4.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S4017XMarcona, "modelorangercrucesS4017XMarcona.rds")
+```
+
+```{r}
+modelorangercrucesS4017XMarcona <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesS4017XMarcona.rds")
+modelorangercrucesS4017XMarcona
+```
+
+
+```{r, echo=FALSE}
+ranger.prediction4 <- predict(modelorangercrucesS4017XMarcona,datos4.test)
+ranger.confimatrix4 <- confusionMatrix(ranger.prediction4, datos4.test$CRUZE)  
+ranger.confimatrix4
+```
+
+Obtenemos valores de precision del 81% lo cual indica buenos resultados.
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S4017XMarcona <- train(x = datos4.train_x,
+                         y = datos4.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S4017XMarcona, "modelorfcrucesS4017XMarcona.rds")
+```
+
+```{r}
+modelorfcrucesS4017XMarcona <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesS4017XMarcona.rds")
+modelorfcrucesS4017XMarcona
+```
+
+```{r}
+caret::varImp(modelorfcrucesS4017XMarcona)
+```
+
+```{r,echo=FALSE}
+rf.prediction4 <- predict(modelorfcrucesS4017XMarcona,datos4.test)
+rf.confimatrix4 <- confusionMatrix(rf.prediction4, datos4.test$CRUZE)  
+rf.confimatrix4
+```
+
+### 6.4.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima4 <- predict(modelorangercrucesS4017XMarcona, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima4)
+```
+
+El cruzamiento optimo seria el anterior a este, Antoneta x Marcona.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados4 <- predict(modelorangercrucesS4017XMarcona, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados4)
+```
+
+Nuestra segunda muestra pertenceria a este cruzamiento. 
+
+## 6.5 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA R1000 X D98i707
+
+Convertimos las clases
+
+```{r}
+datos5 <- datosc
+datos5$CRUZE <- fct_other(datos5$CRUZE, keep = "R1000XD98i707", other_level = "OTROS")
+table(datos5$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos5.id <- createDataPartition(datos5$CRUZE, p=0.7, list = FALSE)
+datos5.train <- datos5[datos5.id,]
+datos5.test <- datos5[-datos5.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos5.train_x = datos5.train
+
+maskneg = which(datos5.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos5.train_x$CRUZE == "R1000XD98i707") #Seleccinamos la clase UTR
+datos5.train_x = datos5.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos5.train_x = datos5.train_x[sample(1:nrow(datos5.train_x),nrow(datos5.train_x)),]
+
+datos5.train_y = datos5.train_x$CRUZE
+
+table(datos5.train_x$CRUZE)
+```
+
+```{r}
+datos5.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.R1000XD98i707 <- train(x = datos5.train_x,
+                         y = datos5.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.R1000XD98i707, "modelorangercrucesR1000XD98i707.rds")
+```
+
+```{r}
+modelorangercrucesR1000XD98i707 <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesR1000XD98i707.rds")
+modelorangercrucesR1000XD98i707
+```
+
+```{r, echo=FALSE}
+ranger.prediction5 <- predict(modelorangercrucesR1000XD98i707,datos5.test)
+ranger.confimatrix5 <- confusionMatrix(ranger.prediction5, datos5.test$CRUZE)  
+ranger.confimatrix5
+```
+
+Obtenemos valores de precision del 80% lo cual indica buenos resultados.
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.R1000XD98i707 <- train(x = datos5.train_x,
+                         y = datos5.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.R1000XD98i707, "modelorfcrucesR1000XD98i707.rds")
+```
+
+```{r}
+modelorfcrucesR1000XD98i707 <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesR1000XD98i707.rds")
+modelorfcrucesR1000XD98i707
+```
+
+```{r}
+caret::varImp(modelorfcrucesR1000XD98i707)
+```
+
+```{r, echo=FALSE}
+rf.prediction5 <- predict(modelorfcrucesR1000XD98i707,datos5.test)
+rf.confimatrix5 <- confusionMatrix(rf.prediction5, datos5.test$CRUZE)  
+rf.confimatrix5
+```
+
+### 6.5.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima5 <- predict(modelorangercrucesR1000XD98i707, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima5)
+```
+
+El cruzamiento optimo seria el anterior a este, Antoneta x Marcona.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados5 <- predict(modelorangercrucesR1000XD98i707, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados5)
+```
+
+## 6.6 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA D00i078 X D01i467
+
+Convertimos las clases
+
+```{r}
+datos6 <- datosc
+datos6$CRUZE <- fct_other(datos6$CRUZE, keep = "D00i078XD01i467", other_level = "OTROS")
+table(datos6$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos6.id <- createDataPartition(datos6$CRUZE, p=0.7, list = FALSE)
+datos6.train <- datos6[datos6.id,]
+datos6.test <- datos6[-datos6.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos6.train_x = datos6.train
+
+maskneg = which(datos6.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas 
+maskpos = which(datos6.train_x$CRUZE == "D00i078XD01i467") #Seleccinamos la clase
+datos6.train_x = datos6.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos6.train_x = datos6.train_x[sample(1:nrow(datos6.train_x),nrow(datos6.train_x)),]
+
+datos6.train_y = datos6.train_x$CRUZE
+
+table(datos6.train_x$CRUZE)
+```
+
+```{r}
+datos6.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.D00i078XD01i467 <- train(x = datos6.train_x,
+                         y = datos6.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.D00i078XD01i467, "modelorangercrucesD00i078XD01i467.rds")
+```
+
+```{r}
+modelorangercrucesD00i078XD01i467 <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesD00i078XD01i467.rds")
+modelorangercrucesD00i078XD01i467
+```
+
+
+```{r, echo=FALSE}
+ranger.prediction6 <- predict(modelorangercrucesD00i078XD01i467,datos6.test)
+ranger.confimatrix6 <- confusionMatrix(ranger.prediction6, datos6.test$CRUZE)  
+ranger.confimatrix6
+```
+
+Obtenemos valores de precision del 68% lo cual indica no muy buenos resultados.
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.D00i078XD01i467 <- train(x = datos6.train_x,
+                         y = datos6.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.D00i078XD01i467, "modelorfcrucesD00i078XD01i467.rds")
+```
+
+```{r}
+modelorfcrucesD00i078XD01i467 <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesD00i078XD01i467.rds")
+modelorfcrucesD00i078XD01i467
+```
+
+```{r}
+caret::varImp(modelorfcrucesD00i078XD01i467)
+```
+
+```{r}
+rf.prediction6 <- predict(modelorfcrucesD00i078XD01i467,datos6.test)
+rf.confimatrix6 <- confusionMatrix(rf.prediction6, datos6.test$CRUZE)  
+rf.confimatrix6
+```
+
+### 6.6.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima5 <- predict(modelorangercrucesD00i078XD01i467, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima5)
+```
+
+El cruzamiento optimo seria el anterior a este, Antoneta x Marcona.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados5 <- predict(modelorangercrucesD00i078XD01i467, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados5)
+```
+
+## 6.7 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S5133 X Laureanne
+
+Convertimos las clases
+
+```{r}
+datos7 <- datosc
+datos7$CRUZE <- fct_other(datos7$CRUZE, keep = "S5133XLauranne", other_level = "OTROS")
+table(datos7$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos7.id <- createDataPartition(datos7$CRUZE, p=0.7, list = FALSE)
+datos7.train <- datos7[datos7.id,]
+datos7.test <- datos7[-datos7.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos7.train_x = datos7.train
+
+maskneg = which(datos7.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos7.train_x$CRUZE == "S5133XLauranne") #Seleccinamos la clase UTR
+datos7.train_x = datos7.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos7.train_x = datos7.train_x[sample(1:nrow(datos7.train_x),nrow(datos7.train_x)),]
+
+datos7.train_y = datos7.train_x$CRUZE
+
+table(datos7.train_x$CRUZE)
+```
+
+```{r}
+datos7.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133XLauranne <- train(x = datos7.train_x,
+                         y = datos7.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133XLauranne, "modelorangercrucesS5133XLauranne.rds")
+```
+
+```{r}
+modelorangercrucesS5133XLauranne <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesS5133XLauranne.rds")
+modelorangercrucesS5133XLauranne
+```
+
+```{r, echo=FALSE}
+ranger.prediction7 <- predict(modelorangercrucesS5133XLauranne,datos7.test)
+ranger.confimatrix7<- confusionMatrix(ranger.prediction7, datos7.test$CRUZE)  
+ranger.confimatrix7
+```
+
+Obtenemos valores de precision del 65% lo cual indica malos resultados.
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133XLauranne <- train(x = datos7.train_x,
+                         y = datos7.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133XLauranne, "modelorfcrucesS5133XLauranne.rds")
+```
+
+```{r}
+modelorfcrucesS5133XLauranne <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesS5133XLauranne.rds")
+modelorfcrucesS5133XLauranne
+```
+
+```{r}
+caret::varImp(modelorfcrucesS5133XLauranne)
+```
+
+```{r}
+rf.prediction7 <- predict(modelorfcrucesS5133XLauranne,datos7.test)
+rf.confimatrix7 <- confusionMatrix(rf.prediction7, datos7.test$CRUZE)  
+rf.confimatrix7
+```
+
+### 6.7.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima6 <- predict(modelorangercrucesS5133XLauranne, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima6)
+```
+
+El cruzamiento optimo seria el anterior a este, Antoneta x Marcona.
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados6 <- predict(modelorangercrucesS5133XLauranne, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados6)
+```
+
+## 6.8 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S5133 X Marta
+
+Convertimos las clases
+
+```{r}
+datos8 <- datosc
+datos8$CRUZE <- fct_other(datos8$CRUZE, keep = "S5133XMarta", other_level = "OTROS")
+table(datos8$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos8.id <- createDataPartition(datos8$CRUZE, p=0.7, list = FALSE)
+datos8.train <- datos8[datos8.id,]
+datos8.test <- datos8[-datos8.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos8.train_x = datos8.train
+
+maskneg = which(datos8.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos8.train_x$CRUZE == "S5133XMarta") #Seleccinamos la clase UTR
+datos8.train_x = datos8.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos8.train_x = datos8.train_x[sample(1:nrow(datos8.train_x),nrow(datos8.train_x)),]
+
+datos8.train_y = datos8.train_x$CRUZE
+
+table(datos8.train_x$CRUZE)
+```
+
+```{r}
+datos8.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133XMarta <- train(x = datos8.train_x,
+                         y = datos8.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133XMarta, "modelorangercrucesS5133XMarta.rds")
+```
+
+```{r}
+modelorangercrucesS5133XMarta <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesS5133XMarta.rds")
+modelorangercrucesS5133XMarta
+```
+Obtenemos valores de precision del 79%.
+
+```{r, echo=FALSE}
+ranger.prediction8 <- predict(modelorangercrucesS5133XMarta,datos8.test)
+ranger.confimatrix8 <- confusionMatrix(ranger.prediction8, datos8.test$CRUZE)  
+ranger.confimatrix8
+```
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133XMarta <- train(x = datos8.train_x,
+                         y = datos8.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133XMarta, "modelorfcrucesS5133XMarta.rds")
+```
+
+```{r}
+modelorfcrucesS5133XMarta <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesS5133XMarta.rds")
+modelorfcrucesS5133XMarta
+```
+
+```{r}
+caret::varImp(modelorfcrucesS5133XMarta)
+```
+
+```{r}
+rf.prediction8 <- predict(modelorfcrucesS5133XMarta,datos8.test)
+rf.confimatrix8 <- confusionMatrix(rf.prediction8, datos8.test$CRUZE)  
+rf.confimatrix8
+```
+
+### 6.8.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima7 <- predict(modelorangercrucesS5133XMarta, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima7)
+```
+
+Perteneceria S5133 X Marta
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados7 <- predict(modelorangercrucesS5133XMarta, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados7)
+```
+
+## 6.9 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S5133 X Pwebbi
+
+Convertimos las clases
+
+```{r}
+datos9 <- datosc
+datos9$CRUZE <- fct_other(datos9$CRUZE, keep = "S5133XPwebbi", other_level = "OTROS")
+table(datos9$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos9.id <- createDataPartition(datos9$CRUZE, p=0.7, list = FALSE)
+datos9.train <- datos9[datos9.id,]
+datos9.test <- datos9[-datos9.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos9.train_x = datos9.train
+
+maskneg = which(datos9.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos9.train_x$CRUZE == "S5133XPwebbi") #Seleccinamos la clase UTR
+datos9.train_x = datos9.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos9.train_x = datos9.train_x[sample(1:nrow(datos9.train_x),nrow(datos9.train_x)),]
+
+datos9.train_y = datos9.train_x$CRUZE
+
+table(datos9.train_x$CRUZE)
+```
+
+```{r}
+datos9.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S5133XPwebbi <- train(x = datos9.train_x,
+                         y = datos9.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S5133XPwebbi, "modelorangercrucesS5133XPwebbi.rds")
+```
+
+```{r}
+modelorangercrucesS5133XPwebbi <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesS5133XPwebbi.rds")
+modelorangercrucesS5133XPwebbi
+```
+
+
+```{r, echo=FALSE}
+ranger.prediction9 <- predict(modelorangercrucesS5133XPwebbi,datos9.test)
+ranger.confimatrix9 <- confusionMatrix(ranger.prediction9, datos9.test$CRUZE)  
+ranger.confimatrix9
+```
+
+Obtenemos valores de precision del 95%.
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S5133XPwebbi <- train(x = datos9.train_x,
+                         y = datos9.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S5133XPwebbi, "modelorfcrucesS5133XPwebbi.rds")
+```
+
+```{r}
+modelorfcrucesS5133XPwebbi <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesS5133XPwebbi.rds")
+modelorfcrucesS5133XPwebbi
+```
+
+```{r}
+caret::varImp(modelorfcrucesS5133XPwebbi)
+```
+
+```{r,echo=FALSE}
+rf.prediction9 <- predict(modelorfcrucesS5133XPwebbi,datos9.test)
+rf.confimatrix9 <- confusionMatrix(rf.prediction9, datos9.test$CRUZE)  
+rf.confimatrix9
+```
+
+### 6.9.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima8 <- predict(modelorangercrucesS5133XPwebbi, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima8)
+```
+
+Perteneceria a otro cruce
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados8 <- predict(modelorangercrucesS5133XPwebbi, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados8)
+```
+
+## 6.10 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA S2332 X Ramillete
+
+Convertimos las clases
+
+```{r}
+datos10 <- datosc
+datos10$CRUZE <- fct_other(datos10$CRUZE, keep = "S2332XRamillete", other_level = "OTROS")
+table(datos10$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos10.id <- createDataPartition(datos10$CRUZE, p=0.7, list = FALSE)
+datos10.train <- datos10[datos10.id,]
+datos10.test <- datos10[-datos10.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos10.train_x = datos10.train
+
+maskneg = which(datos10.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos10.train_x$CRUZE == "S2332XRamillete") #Seleccinamos la clase UTR
+datos10.train_x = datos10.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos10.train_x = datos10.train_x[sample(1:nrow(datos10.train_x),nrow(datos10.train_x)),]
+
+datos10.train_y = datos10.train_x$CRUZE
+
+table(datos10.train_x$CRUZE)
+```
+
+```{r}
+datos10.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.S2332XRamillete <- train(x = datos10.train_x,
+                         y = datos10.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.S2332XRamillete, "modelorangercrucesS2332XRamillete.rds")
+```
+
+```{r}
+modelorangercrucesS2332XRamillete <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesS2332XRamillete.rds")
+modelorangercrucesS2332XRamillete
+```
+
+Obtenemos valores de precision del 80%.
+
+```{r, echo=FALSE}
+ranger.prediction10 <- predict(modelorangercrucesS2332XRamillete,datos10.test)
+ranger.confimatrix10 <- confusionMatrix(ranger.prediction10, datos10.test$CRUZE)  
+ranger.confimatrix10
+```
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.S2332XRamillete <- train(x = datos10.train_x,
+                         y = datos10.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.S2332XRamillete, "modelorfcrucesS2332XRamillete.rds")
+```
+
+```{r}
+modelorfcrucesS2332XRamillete <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesS2332XRamillete.rds")
+modelorfcrucesS2332XRamillete
+```
+
+```{r}
+caret::varImp(modelorfcrucesS2332XRamillete)
+```
+
+```{r, echo=FALSE}
+rf.prediction10 <- predict(modelorfcrucesS2332XRamillete,datos10.test)
+rf.confimatrix10 <- confusionMatrix(rf.prediction10, datos10.test$CRUZE)  
+rf.confimatrix10
+```
+
+### 6.10.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima9 <- predict(modelorangercrucesS2332XRamillete, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima9)
+```
+
+Perteneceria a otro cruce
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados9 <- predict(modelorangercrucesS2332XRamillete, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados9)
+```
+
+## 6.11 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA R1000 X S5133
+
+Convertimos las clases
+
+```{r}
+datos11 <- datosc
+datos11$CRUZE <- fct_other(datos11$CRUZE, keep = "R1000XS5133", other_level = "OTROS")
+table(datos11$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos11.id <- createDataPartition(datos11$CRUZE, p=0.7, list = FALSE)
+datos11.train <- datos11[datos11.id,]
+datos11.test <- datos11[-datos11.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos11.train_x = datos11.train
+
+maskneg = which(datos11.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas
+maskpos = which(datos11.train_x$CRUZE == "R1000XS5133") #Seleccinamos la clase 
+datos11.train_x = datos11.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos11.train_x = datos11.train_x[sample(1:nrow(datos11.train_x),nrow(datos11.train_x)),]
+
+datos11.train_y = datos11.train_x$CRUZE
+
+table(datos11.train_x$CRUZE)
+```
+
+```{r}
+datos11.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.R1000XS5133 <- train(x = datos11.train_x,
+                         y = datos11.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.R1000XS5133, "modelorangercrucesR1000XS5133.rds")
+```
+
+```{r}
+modelorangercrucesR1000XS5133 <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesR1000XS5133.rds")
+modelorangercrucesR1000XS5133
+```
+
+Obtenemos valores de precision del 60%.
+
+```{r, echo=FALSE}
+ranger.prediction11 <- predict(modelorangercrucesR1000XS5133,datos11.test)
+ranger.confimatrix11 <- confusionMatrix(ranger.prediction11, datos11.test$CRUZE)  
+ranger.confimatrix11
+```
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.R1000XS5133 <- train(x = datos11.train_x,
+                         y = datos11.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.R1000XS5133, "modelorfcrucesR1000XS5133.rds")
+```
+
+```{r}
+modelorfcrucesR1000XS5133 <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesR1000XS5133.rds")
+modelorfcrucesR1000XS5133
+```
+
+```{r}
+caret::varImp(modelorfcrucesR1000XS5133)
+```
+
+```{r}
+rf.prediction11 <- predict(modelorfcrucesR1000XS5133,datos11.test)
+rf.confimatrix11 <- confusionMatrix(rf.prediction11, datos11.test$CRUZE)  
+rf.confimatrix11
+```
+
+### 6.11.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima10 <- predict(modelorangercrucesR1000XS5133, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima10)
+```
+
+Perteneceria a otro cruce
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados10 <- predict(modelorangercrucesR1000XS5133, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados10)
+```
+
+## 6.12 GENERACION DE MODELOS DE CLASIFICACION BINARIA PARA CLASE POSITIVA Marta X Antoneta
+
+Convertimos las clases
+
+```{r}
+datos12 <- datosc
+datos12$CRUZE <- fct_other(datos12$CRUZE, keep = "MartaXAntoneta", other_level = "OTROS")
+table(datos12$CRUZE)
+```
+
+Balanceamos los datos.
+
+
+```{r}
+datos12.id <- createDataPartition(datos12$CRUZE, p=0.7, list = FALSE)
+datos12.train <- datos12[datos12.id,]
+datos12.test <- datos12[-datos12.id,]
+```
+
+Ahora balancearemos los datos del train de cara a entrenar los modelos. 
+
+```{r}
+datos12.train_x = datos12.train
+
+maskneg = which(datos12.train_x$CRUZE == "OTROS") #Seleccionamos las clases distintas de UTR
+maskpos = which(datos12.train_x$CRUZE == "MartaXAntoneta") #Seleccinamos la clase UTR
+datos12.train_x = datos12.train_x[c(maskpos,sample(maskneg,length(maskpos))),]
+
+datos12.train_x = datos12.train_x[sample(1:nrow(datos12.train_x),nrow(datos12.train_x)),]
+
+datos12.train_y = datos12.train_x$CRUZE
+
+table(datos12.train_x$CRUZE)
+```
+
+```{r}
+datos12.train_x$CRUZE=NULL
+```
+
+Caret define por defecto la tecnica de remuestreo en la mitica bootstrap, sin embargo nosotros utilizaremos la crossvalidacion cruzada, en este caso de 10 pliegues con 3 repeticiones cada una (number=numero de pliegues -> 10 , repeats=numero de repeticiones -> 3). Además, añadimos la linea de comando verboseIter=TRUE para poder observar el avance del remuestreo en el entrenamiento del modelo. 
+
+
+```{r, eval=FALSE}
+modeloranger.3cv10.MartaXAntoneta <- train(x = datos12.train_x,
+                         y = datos12.train_y,
+                         method = "ranger",  #En este caso el metodo ranger
+                         trControl = TrainCtrlRanger.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modeloranger.3cv10.MartaXAntoneta, "modelorangercrucesMartaXAntoneta.rds")
+```
+
+```{r}
+modelorangercrucesMartaXAntoneta <- readRDS("C:/Users/gonza/Documents/TFM/modelorangercrucesMartaXAntoneta.rds")
+modelorangercrucesMartaXAntoneta
+```
+
+```{r, echo=FALSE}
+ranger.prediction12 <- predict(modelorangercrucesMartaXAntoneta,datos12.test)
+ranger.confimatrix12 <- confusionMatrix(ranger.prediction12, datos12.test$CRUZE)  
+ranger.confimatrix12
+```
+
+
+Ahora algorimto rf para la importancia
+
+```{r, eval=FALSE}
+modelorf.3cv10.MartaXAntoneta <- train(x = datos12.train_x,
+                         y = datos12.train_y,
+                         method = "rf",  #En este caso el metodo rf
+                         trControl = TrainCtrlRf.3cv10)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(modelorf.3cv10.MartaXAntoneta, "modelorfcrucesMartaXAntoneta.rds")
+```
+
+```{r}
+modelorfcrucesMartaXAntoneta <- readRDS("C:/Users/gonza/Documents/TFM/modelorfcrucesMartaXAntoneta.rds")
+modelorfcrucesMartaXAntoneta
+```
+
+```{r}
+caret::varImp(modelorfcrucesMartaXAntoneta)
+```
+
+```{r, echo=FALSE}
+rf.prediction12 <- predict(modelorfcrucesMartaXAntoneta,datos12.test)
+rf.confimatrix12 <- confusionMatrix(rf.prediction12, datos12.test$CRUZE)  
+rf.confimatrix12
+```
+
+### 6.12.1 SELECCIÓN DEL MEJOR CRUZAMIENTO
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptima11 <- predict(modelorangercrucesMartaXAntoneta, newdata = muestra)
+
+# Resultado de la predicción
+print(prediccionoptima11)
+```
+
+Perteneceria a este cruce nuestro almendro optimo, observamos en ambos casos la presencia de antoñeta
+
+```{r}
+# Predicción del grupo de la muestra inventada
+prediccionoptimados11 <- predict(modelorangercrucesMartaXAntoneta, newdata = muestrados)
+
+# Resultado de la predicción
+print(prediccionoptimados11)
+```
+
+## 6.13 COMPARACIÓN DE MODELOS
+
+```{r}
+listamodelos <- list(S4017XMarcona = modelorangercrucesS4017XMarcona, AntonetaXMarcona = modelorangercrucesAntonetaXMarcona, S5133XR1000 = modelorfcrucesS5133XR1000, S5133XA2198 = modelorangercruceCbin, R1000XD98i707 = modelorangercrucesR1000XD98i707, D00i078XD01i467 = modelorangercrucesD00i078XD01i467, S5133XLauranne = modelorangercrucesS5133XLauranne, S5133XMarta = modelorangercrucesS5133XMarta , S5133XPwebbi = modelorangercrucesS5133XPwebbi, S2332XRamillete = modelorangercrucesS2332XRamillete, R1000XS5133 = modelorangercrucesR1000XS5133, MartaXAntoneta = modelorangercrucesMartaXAntoneta)
+modelos.resample <- resamples(listamodelos)
+summary(modelos.resample)
+```
+
+```{r}
+bwplot(modelos.resample, main="Precision modelos binarios para la variable cruzamiento",  xlim = c(0.3, 1.2))
+```
+
+
+```{r}
+difest <- diff(modelos.resample, adjustment = "none")
+summary(difest)
+```
+
+
+
+
+
